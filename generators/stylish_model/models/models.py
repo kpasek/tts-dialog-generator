@@ -1,7 +1,7 @@
 # coding:utf-8
 
 
-from stylish_model.stylish_lib.config_loader import ModelConfig
+from generators.stylish_model.stylish_lib.config_loader import ModelConfig
 
 
 from .text_aligner import tdnn_blstm_ctc_model_base

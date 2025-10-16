@@ -3,7 +3,7 @@ import torch
 from torch import nn
 from torch.nn import functional as F
 from einops import rearrange
-from stylish_model.utils import sequence_mask
+from generators.stylish_model.utils import sequence_mask
 
 
 class LayerNorm(nn.Module):

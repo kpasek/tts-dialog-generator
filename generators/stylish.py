@@ -1,4 +1,4 @@
-from stylish_model.app import synthesize_text
+from generators.stylish_model.app import synthesize_text
 from gradio import processing_utils
 
 class TTS:

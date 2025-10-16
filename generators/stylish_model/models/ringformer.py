@@ -11,7 +11,7 @@ from einops import rearrange
 
 import math
 from scipy.signal import get_window
-from stylish_model.utils import DecoderPrediction
+from generators.stylish_model.utils import DecoderPrediction
 from .common import InstanceNorm1d
 
 

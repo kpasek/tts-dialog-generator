@@ -1,5 +1,5 @@
 import torch
-from stylish_model.utils import leaky_clamp
+from generators.stylish_model.utils import leaky_clamp
 
 
 def init_weights(m, mean=0.0, std=0.01):

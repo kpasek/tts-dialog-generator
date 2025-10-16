@@ -5,12 +5,13 @@ import os
 import random
 import librosa
 import phonemizer
-from stylish_model.config_loader import load_model_config_yaml
-from stylish_model.models.export_model import ExportModel
-from stylish_model.models.models import build_model
-from stylish_model.text_utils import TextCleaner
+from generators.stylish_model.config_loader import load_model_config_yaml
+from generators.stylish_model.models.export_model import ExportModel
+from generators.stylish_model.models.models import build_model
+from generators.stylish_model.text_utils import TextCleaner
 from phonemizer.backend.espeak.wrapper import EspeakWrapper
-EspeakWrapper.set_library("C:\\Program Files\\eSpeak NG\\libespeak-ng.dll")
+if os.name == 'nt': 
+    EspeakWrapper.set_library("C:\\Program Files\\eSpeak NG\\libespeak-ng.dll")
 # Set random seeds for reproducibility
 torch.manual_seed(0)
 random.seed(0)
@@ -23,8 +24,8 @@ model = None
 device = "cpu"
 
 # Local tts_model files
-CHECKPOINT_DIR = "tts_model/checkpoint_final"
-MODEL_CONFIG_PATH = "tts_model/model.yml"
+CHECKPOINT_DIR = "generators/stylish_model/checkpoint_final"
+MODEL_CONFIG_PATH = "generators/stylish_model/model.yml"
 
 # Define examples for the interface
 examples = [

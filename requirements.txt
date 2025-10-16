@@ -6,3 +6,6 @@ torchaudio
 numpy
 gradio
 phonemizer
+nnAudio
+munch
+

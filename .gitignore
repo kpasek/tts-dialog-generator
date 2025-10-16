@@ -1,4 +1,8 @@
 .venv
+.vscode
+.idea
+
 
 subtitles
 dialogs
+__pycache__
