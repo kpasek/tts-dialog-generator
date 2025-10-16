@@ -105,12 +105,18 @@ Zasada przyspieszenia:
 
     audio do 3 sekund – bez zmian,
 
-    powyżej 3 s – co 2 sekundy długości zwiększają szybkość o 2%,
+    powyżej 3 s – co 2 sekundy długości zwiększają szybkość o 3%,
 
     maksymalne przyspieszenie: 20%,
 
     dodatkowo, wersja output2 jest przyspieszana o kolejne 10% względem output1.
 
+    Przyspieszanie audio wykonywane jest przez program ffmpeg i należy mieć go zainstalowany w systemie
+    Instalacja ubuntu:
+    sudo apt install ffmpeg
+    Instalacja Windows:
+    winget install Gyan.FFmpeg
+    
 Przykład użycia:
 
 ```python
