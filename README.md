@@ -30,6 +30,16 @@ Następnie zainstaluj wymagane zależności:
 pip install -r requirements.txt
 ```
 
+W przypadku posiadania karty NVIDIA i chęci generowania na GPU
+W pierwszej kolejności należy zainstalować CUDA
+`https://developer.nvidia.com/cuda-12-9-1-download-archive`
+Póki co obsługiwana jest wersji 12
+    UWAGA! instalacja CUDA może nadpisać aktualne sterowniki do karty graficznej!
+```shell
+pip uninstall torch torchvision torchaudio
+pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu129
+```
+
 Do katalogu `generators/stylish_model/checkpoint_final` należy przekopiować wszystkie pliki `.bin` z repozytorium twórcy modelu
 `https://huggingface.co/spaces/FashionFlora/STylish-TTS-Pl/tree/main/checkpoint_final`
 
