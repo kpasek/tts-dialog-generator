@@ -13,7 +13,7 @@ class XTTSPolishTTS:
             XttsArgs,
             XttsAudioConfig,
             BaseDatasetConfig])
-        
+
         self.model = TTS("tts_models/multilingual/multi-dataset/xtts_v2")
         # self.model = TTS("tts_models/multilingual/multi-dataset/xtts_v1.1")
         device = "cuda" if torch.cuda.is_available() else "cpu"
@@ -21,8 +21,9 @@ class XTTSPolishTTS:
         self.model.to(device)
 
     def tts(self, text, output_path="output_polish.wav"):
-        voice_name = "michal.wav"
-        voice = os.path.abspath(os.path.join("voices", voice_name))
+        voice_name = "daniel.wav"
+        voice_path = os.path.join("generators", "voices", voice_name)
+        voice = os.path.abspath(voice_path)
         if os.name == "nt":
             voice = f"generators\\voices\\{voice_name}"
 
