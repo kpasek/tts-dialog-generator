@@ -10,7 +10,13 @@ class Crysis1Cleaner(Cleaner):
     def clean_line(self, line: str) -> str:
         line = re.sub(r".*[tT]rigge[rd].*", "", line)
         line = re.sub(r"##.*", "", line)
+        line = re.sub(r"\\n.*", "", line)
         return super().clean_line(line)
+    
+    def tts_line(self, text: str) -> str:
+        line = re.sub(r"##", " ", text)
+        line = re.sub(r"\\n", " ", text)
+        return super().tts_line(text)
 
     def get_patterns(self):
         return [
@@ -20,7 +26,6 @@ class Crysis1Cleaner(Cleaner):
     (r"Bornheim","Bornhajm"),
     (r"Bradley","Bradlej"),
     (r"C4","Ce-cztery"),
-    (r"CIA","Si-aj-ej"),
     (r"Collins","Kolins"),
     (r"Constitution","Konstituszyn"),
     (r"Cooper","Kuper"),
@@ -30,7 +35,6 @@ class Crysis1Cleaner(Cleaner):
     (r"Eddie","Edi"),
     (r"Gauss","Gałss"),
     (r"Gillespie","Gilespi"),
-    (r"GPS","Dżi-pi-es"),
     (r"Hongzhou","Hongdżou"),
     (r"Idaho","Ajdaho"),
     (r"Joe","Dżo"),

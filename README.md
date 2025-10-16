@@ -1,7 +1,7 @@
 # 🎙️ Generator dialogów z wykorzystaniem modelu Stylish-TTS-PL
 
-Repozytorium zawiera zestaw narzędzi do generowania głosów lektorskich w języku polskim z wykorzystaniem modelu **Stylish-TTS-PL**.  
-Projekt został przygotowany z myślą o integracji z programem **Game Reader**, służącym do automatycznego odczytywania dialogów w grach.
+Repozytorium zawiera zestaw narzędzi do generowania głosów lektorskich w języku polskim z wykorzystaniem modelu **Stylish-TTS-PL** lub **XTTS_v2**.  
+Projekt został przygotowany z myślą o integracji z programem **Game Reader** [https://gamereader.tilda.ws/], służącym do automatycznego odczytywania dialogów w grach.
 
 ---
 

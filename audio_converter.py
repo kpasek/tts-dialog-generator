@@ -10,7 +10,7 @@ class AudioConverter:
         """
         Zwraca współczynnik przyspieszenia w zależności od długości audio.
         - Do 3 sekund: bez zmian (1.0)
-        - Powyżej 3 sekund: każde 2 sekundy -> +3% szybkości
+        - Powyżej 3 sekund: każde 2 sekundy -> +2% szybkości
         """
         duration_sec = duration_ms / 1000
         if duration_sec < 2:
@@ -19,10 +19,10 @@ class AudioConverter:
         if duration_sec <= 3:
             return base_speed
         extra_time = duration_sec - 3
-        speed_factor = base_speed + (1.03 * math.ceil(extra_time / 2))
+        speed_factor = base_speed + (1.02 * math.ceil(extra_time / 2))
         return min(speed_factor, base_speed * 1.2)
 
-    def parse_ogg(self, input_file: str, output_file: str, silence_thresh=-40, keep_silence=250, max_silence=250):
+    def parse_ogg(self, input_file: str, output_file: str, silence_thresh=-30, keep_silence=200, max_silence=200):
         """
         input_file: ścieżka do pliku wejściowego .wav
         output_file: ścieżka do pliku wyjściowego .wav
@@ -77,15 +77,15 @@ class AudioConverter:
                 except Exception as remove_err:
                     print(f"Nie udało się usunąć pliku {output_file}: {remove_err}")
 
-    def speedup_audio(self, file, speed_factor: float):
-        command = f"ffmpeg -i \"{file}\" -filter:a \"atempo={speed_factor}\" -vn -hide_banner -loglevel error \"{file[:-1]}\""
+    def speedup_audio(self, file, output ,speed_factor: float):
+        command = f"ffmpeg -i \"{file}\" -filter:a \"atempo={speed_factor}\" -vn -hide_banner -loglevel error \"{output}\""
         os.system(command)
 
 
     def normalize_audio(self, audio: AudioSegment):
         audio = effects.compress_dynamic_range(
             audio,
-            threshold=-35.0,  # poniżej tego poziomu zostanie wzmocnione
+            threshold=-25.0,  # poniżej tego poziomu zostanie wzmocnione
             ratio=5.0,  # im większe ratio, tym mocniejsze wyrównanie
             attack=5,  # szybka reakcja kompresora (ms)
             release=50,  # dość szybkie "odpuszczenie"
@@ -99,15 +99,15 @@ class AudioConverter:
             return
         temp_file = f"{output_file}2"
         audio.export(temp_file, format="ogg")
-        self.speedup_audio(temp_file, speed)
+        self.speedup_audio(temp_file, output_file, speed)
         os.remove(temp_file)
 
     def convert_audio(self):
-        for audio_dir in os.listdir(".\\dialogs"):
-            audio_dir =os.path.abspath(os.path.join(".\\dialogs", audio_dir))
+        for audio_dir in os.listdir("dialogs"):
+            audio_dir =os.path.abspath(os.path.join("dialogs", audio_dir))
             if not os.path.isdir(audio_dir):
                 continue
-            output_dir = audio_dir + "\\ready"
+            output_dir = os.path.join(audio_dir , "ready")
 
             self.convert_dir(audio_dir, output_dir)
 

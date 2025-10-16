@@ -101,7 +101,7 @@ class Cleaner:
         self.process_file(self.tts_line, True)
 
     def remove_voice_files_by_regex(self, regex_pattern: str, voices_dir=None):
-        pattern = re.compile(regex_pattern)
+        pattern = re.compile(regex_pattern, flags=re.IGNORECASE)
         if voices_dir is None:
             voices_dir = "voices" + self.input_file[7:-4]
         with open(self.input_file, "r", encoding="utf-8") as f:
