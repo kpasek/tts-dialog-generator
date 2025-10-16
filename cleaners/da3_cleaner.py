@@ -456,7 +456,3 @@ class DA3Cleaner(Cleaner):
                 (r"Montilyet", "Montiliet")]
 
 
-cleaner = DA3Cleaner("../subtitles/dragon_age_3/dialogs_da3_ready.txt", "../subtitles/dragon_age_3/da3.txt")
-# for pattern, replace in cleaner.get_patterns():
-#     cleaner.remove_voice_files_by_regex(pattern, "../dialogs/fc3")
-cleaner.clean()

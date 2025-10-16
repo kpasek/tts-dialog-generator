@@ -9,7 +9,7 @@ class Crysis1Cleaner(Cleaner):
 
     def clean_line(self, line: str) -> str:
         line = re.sub(r".*[tT]rigge[rd].*", "", line)
-        line = re.sub(r"##", "\n", line)
+        line = re.sub(r"##.*", "", line)
         return super().clean_line(line)
 
     def get_patterns(self):
@@ -82,5 +82,5 @@ class Crysis1Cleaner(Cleaner):
 # for pattern in cleaner.get_patterns():
 #     cleaner.remove_voice_files_by_regex(r"Nomad", "../dialogs/crysis1")
 
-cleaner = Crysis1Cleaner("../subtitles/crysis1/subtitles_raw.txt", "../subtitles/crysis1/crysis1.txt")
-cleaner.clean()
+# cleaner = Crysis1Cleaner("../subtitles/crysis1/subtitles_raw.txt", "../subtitles/crysis1/crysis1.txt")
+# cleaner.clean()

@@ -21,10 +21,10 @@ class XTTSPolishTTS:
         self.model.to(device)
 
     def tts(self, text, output_path="output_polish.wav"):
-        voice = os.path.abspath(os.path.join("voices", "daniel.wav"))
-        voice = "generators\\voices\\daniel.wav"
-        import soundfile as sf
-        sf.read(voice)
+        voice_name = "michal.wav"
+        voice = os.path.abspath(os.path.join("voices", voice_name))
+        if os.name == "nt":
+            voice = f"generators\\voices\\{voice_name}"
 
         self.model.tts_to_file(
             text=text,

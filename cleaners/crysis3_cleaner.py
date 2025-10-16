@@ -10,7 +10,7 @@ class Crysis3Cleaner(Cleaner):
 
     def clean_line(self, line: str) -> str:
         line = re.sub(r".*[tT]rigge[rd].*", "", line)
-        line = re.sub(r"##", "\n", line)
+        line = re.sub(r"##.*", "", line)
         return super().clean_line(line)
 
     def get_patterns(self):
@@ -45,5 +45,5 @@ class Crysis3Cleaner(Cleaner):
         ]
 
 
-cleaner = Crysis3Cleaner("../subtitles/crysis3/subtitles.txt", "../subtitles/crysis3/crysis3.txt")
-cleaner.clean()
+# cleaner = Crysis3Cleaner("../subtitles/crysis3/subtitles.txt", "../subtitles/crysis3/crysis3.txt")
+# cleaner.clean()

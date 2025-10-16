@@ -77,11 +77,11 @@ class Crysis2Cleaner(Cleaner):
 # for pattern in cleaner.get_patterns():
 #     cleaner.remove_voice_files_by_regex(pattern, "../dialogs/asterix")
 # cleaner.clean()
-def skroc_tekst(line: str) -> str:
-    return ((line[:85]) if len(line) > 85 else line).rstrip("\n")
+# def skroc_tekst(line: str) -> str:
+#     return ((line[:85]) if len(line) > 85 else line).rstrip("\n")
 
 
 
 
-c = Cleaner("../subtitles/crysis2/crysis2_subtitles.txt", "../subtitles/crysis2/crysis2_subtitles2.txt")
-c.process_file(skroc_tekst)
+# c = Cleaner("../subtitles/crysis2/crysis2_subtitles.txt", "../subtitles/crysis2/crysis2_subtitles2.txt")
+# c.process_file(skroc_tekst)
