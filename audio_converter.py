@@ -12,7 +12,6 @@ class AudioConverter:
         - Do 3 sekund: bez zmian (1.0)
         - Powyżej 3 sekund: każde 2 sekundy -> +2% szybkości
         """
-        # return 1.0
         duration_sec = duration_ms / 1000
         if duration_sec < 2:
             return 1.0
