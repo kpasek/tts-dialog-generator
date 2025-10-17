@@ -26,12 +26,15 @@ class XTTSPolishTTS:
         voice = os.path.abspath(voice_path)
         if os.name == "nt":
             voice = f"generators\\voices\\{voice_name}"
+        split = False
+        if len(text) >= 224:
+            split = True
 
         self.model.tts_to_file(
             text=text,
             file_path=output_path,
             language="pl",
             speaker_wav=voice,
-            split_sentences=False
+            split_sentences=split
         )
         return output_path
