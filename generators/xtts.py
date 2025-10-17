@@ -19,13 +19,16 @@ class XTTSPolishTTS:
         device = "cuda" if torch.cuda.is_available() else "cpu"
         print(f"Using device: {device}")
         self.model.to(device)
-
-    def tts(self, text, output_path="output_polish.wav"):
         voice_name = "daniel.wav"
         voice_path = os.path.join("generators", "voices", voice_name)
-        voice = os.path.abspath(voice_path)
+        self.voice = os.path.abspath(voice_path)
         if os.name == "nt":
-            voice = f"generators\\voices\\{voice_name}"
+            self.voice = f"generators\\voices\\{voice_name}"
+
+        print(f"Using voice file: {self.voice}")
+
+    def tts(self, text, output_path="output_polish.wav"):
+
         split = False
         if len(text) >= 224:
             split = True
@@ -34,7 +37,7 @@ class XTTSPolishTTS:
             text=text,
             file_path=output_path,
             language="pl",
-            speaker_wav=voice,
+            speaker_wav=self.voice,
             split_sentences=split
         )
         return output_path

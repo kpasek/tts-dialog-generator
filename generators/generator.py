@@ -24,7 +24,7 @@ class DialogsGenerator:
                 print(f"Generuję: {output_path}")
                 try:
                     tts.tts(dialog, output_path=output_path)
-                except:
-                    print(f"Nie udało się wygenerować pliku: {output_path}")
+                except Exception as e:
+                    print(f"Nie udało się wygenerować pliku: {output_path}, błąd: {e}")
 
             self.generated_dialogs_dirs.append(out_dir)
