@@ -12,6 +12,7 @@ class AudioConverter:
         - Do 3 sekund: bez zmian (1.0)
         - Powyżej 3 sekund: każde 2 sekundy -> +2% szybkości
         """
+        # return 1.0
         duration_sec = duration_ms / 1000
         if duration_sec < 2:
             return 1.0
@@ -19,7 +20,8 @@ class AudioConverter:
         if duration_sec <= 3:
             return base_speed
         extra_time = duration_sec - 3
-        speed_factor = base_speed + (1.02 * math.ceil(extra_time / 2))
+        multiplier = (0.02 * math.ceil(extra_time / 2))
+        speed_factor = base_speed + multiplier
         return min(speed_factor, base_speed * 1.2)
 
     def parse_ogg(self, input_file: str, output_file: str):
@@ -74,12 +76,12 @@ class AudioConverter:
         audio.export(temp_file, format="ogg")
 
         filters = (
-            "highpass=f=70,"
-            "lowpass=f=14000,"
-            "deesser=i=0.4:m=0.3,"
-            "acompressor=threshold=-18dB:ratio=2:attack=5:release=120:makeup=2,"
+            # "highpass=f=70,"
+            # "lowpass=f=14000,"
+            # "deesser=i=0.4:m=0.3,"
+            # "acompressor=threshold=-18dB:ratio=2:attack=5:release=120:makeup=2,"
             "loudnorm=I=-16:TP=-1.5:LRA=11,"
-            "alimiter=limit=-1dB,"
+            # "alimiter=limit=-1dB,"
         )
 
         filter_str = str(filters).strip(',')
