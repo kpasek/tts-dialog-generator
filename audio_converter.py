@@ -22,7 +22,7 @@ class AudioConverter:
         speed_factor = base_speed + (1.02 * math.ceil(extra_time / 2))
         return min(speed_factor, base_speed * 1.2)
 
-    def parse_ogg(self, input_file: str, output_file: str, silence_thresh=-30, keep_silence=200, max_silence=200):
+    def parse_ogg(self, input_file: str, output_file: str):
         """
         input_file: ścieżka do pliku wejściowego .wav
         output_file: ścieżka do pliku wyjściowego .wav
@@ -33,7 +33,8 @@ class AudioConverter:
 
         input_filename = os.path.basename(input_file)
         input_dir = os.path.dirname(output_file)
-        output_path_speed = os.path.join(input_dir, "output2 " + input_filename[8:-4] + ".ogg")
+        output_path_speed = os.path.join(
+            input_dir, "output2 " + input_filename[8:-4] + ".ogg")
         if os.path.exists(output_path_speed) and os.path.exists(output_file):
             return
 
@@ -45,28 +46,14 @@ class AudioConverter:
             else:
                 audio = AudioSegment.from_wav(input_file)
 
-            chunks = silence.split_on_silence(audio,
-                                              silence_thresh=silence_thresh,
-                                              keep_silence=keep_silence)
-
-            result = AudioSegment.silent(duration=0)
-            for i, chunk in enumerate(chunks):
-                result += chunk
-
-                if i < len(chunks) - 1:
-                    result += AudioSegment.silent(duration=max_silence)
-
-            audio = self.normalize_audio(audio)
-
-            base_speed = self.calculate_base_speed(len(result))
+            base_speed = self.calculate_base_speed(len(audio))
 
             if not os.path.exists(output_file):
                 self.export_file(audio, output_file, base_speed)
 
             if not os.path.exists(output_path_speed):
-                speed = 1.10 if (len(result) / 1000) > 2 else 1
+                speed = 1.10 if (len(audio) / 1000) > 2 else 1
                 self.export_file(audio, output_path_speed, base_speed * speed)
-
 
         except Exception as e:
             print(f"Błąd podczas przetwarzania pliku {input_file}: {e}")
@@ -75,39 +62,40 @@ class AudioConverter:
                     os.remove(output_file)
                     print(f"Usunięto plik wyjściowy: {output_file}")
                 except Exception as remove_err:
-                    print(f"Nie udało się usunąć pliku {output_file}: {remove_err}")
+                    print(
+                        f"Nie udało się usunąć pliku {output_file}: {remove_err}")
 
-    def speedup_audio(self, file, output ,speed_factor: float):
-        command = f"ffmpeg -i \"{file}\" -filter:a \"atempo={speed_factor}\" -vn -hide_banner -loglevel error \"{output}\""
-        os.system(command)
-
-
-    def normalize_audio(self, audio: AudioSegment):
-        audio = effects.compress_dynamic_range(
-            audio,
-            threshold=-25.0,  # poniżej tego poziomu zostanie wzmocnione
-            ratio=5.0,  # im większe ratio, tym mocniejsze wyrównanie
-            attack=5,  # szybka reakcja kompresora (ms)
-            release=50,  # dość szybkie "odpuszczenie"
-        )
-        audio = effects.normalize(audio)
-        return audio
-
-    def export_file(self, audio, output_file, speed: float):
-        if speed == 1.0:
-            audio.export(output_file, format="ogg")
-            return
-        temp_file = f"{output_file}2"
+    def export_file(self, audio: AudioSegment, output_file: str, speed: float):
+        """
+        Eksportuje AudioSegment do pliku OGG i przepuszcza przez zestaw filtrów ffmpeg
+        zoptymalizowanych pod męski głos lektora.
+        """
+        temp_file = output_file + ".temp.ogg"
         audio.export(temp_file, format="ogg")
-        self.speedup_audio(temp_file, output_file, speed)
+
+        filters = (
+            "highpass=f=70,"
+            "lowpass=f=14000,"
+            "deesser=i=0.4:m=0.3,"
+            "acompressor=threshold=-18dB:ratio=2:attack=5:release=120:makeup=2,"
+            "loudnorm=I=-16:TP=-1.5:LRA=11,"
+            "alimiter=limit=-1dB,"
+        )
+
+        filter_str = str(filters).strip(',')
+
+        speed_filter = f",atempo={speed}" if speed != 1.0 else ""
+
+        command = f'ffmpeg -i "{temp_file}" -af "{filter_str}{speed_filter}" -y -loglevel error "{output_file}"'
+        os.system(command)
         os.remove(temp_file)
 
     def convert_audio(self):
         for audio_dir in os.listdir("dialogs"):
-            audio_dir =os.path.abspath(os.path.join("dialogs", audio_dir))
+            audio_dir = os.path.abspath(os.path.join("dialogs", audio_dir))
             if not os.path.isdir(audio_dir):
                 continue
-            output_dir = os.path.join(audio_dir , "ready")
+            output_dir = os.path.join(audio_dir, "ready")
 
             self.convert_dir(audio_dir, output_dir)
 
@@ -122,12 +110,14 @@ class AudioConverter:
                     ogg_file = filename[:-4] + ".ogg"
                     output_path_ogg = os.path.join(output_dir, ogg_file)
 
-                    tasks_ogg.append(executor.submit(self.parse_ogg, input_path, output_path_ogg))
+                    tasks_ogg.append(executor.submit(
+                        self.parse_ogg, input_path, output_path_ogg))
 
             for task_ogg in tasks_ogg:
                 task_ogg.result()
 
-        print(f"✅ Zakończono przetwarzanie wszystkich plików audio dla {audio_dir}")
+        print(
+            f"✅ Zakończono przetwarzanie wszystkich plików audio dla {audio_dir}")
 
 
 if __name__ == "__main__":
