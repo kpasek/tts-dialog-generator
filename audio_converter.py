@@ -15,7 +15,7 @@ class AudioConverter:
         duration_sec = duration_ms / 1000
         if duration_sec < 2:
             return 1.0
-        base_speed = 1.0
+        base_speed = 1.1
         if duration_sec <= 3:
             return base_speed
         extra_time = duration_sec - 3
@@ -79,15 +79,17 @@ class AudioConverter:
             # "lowpass=f=14000,"
             # "deesser=i=0.4:m=0.3,"
             # "acompressor=threshold=-18dB:ratio=2:attack=5:release=120:makeup=2,"
-            "loudnorm=I=-16:TP=-1.5:LRA=11,"
-            # "alimiter=limit=-1dB,"
+            # "loudnorm=I=-16:TP=-1.5:LRA=11,"
+            "alimiter=limit=-1dB,"
         )
 
         filter_str = str(filters).strip(',')
 
         speed_filter = f",atempo={speed}" if speed != 1.0 else ""
 
-        command = f'ffmpeg -i "{temp_file}" -af "{filter_str}{speed_filter}" -y -loglevel error "{output_file}"'
+        filter = f"{filter_str}{speed_filter}".strip(',')
+
+        command = f'ffmpeg -i "{temp_file}" -af "{filter}" -y -loglevel error "{output_file}"'
         os.system(command)
         os.remove(temp_file)
 
