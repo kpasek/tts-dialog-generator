@@ -1,0 +1,4 @@
+customtkinter
+nltk
+pillow
+pyinstaller

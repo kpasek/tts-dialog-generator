@@ -19,7 +19,7 @@ class XTTSPolishTTS:
         device = "cuda" if torch.cuda.is_available() else "cpu"
         print(f"Using device: {device}")
         self.model.to(device)
-        voice_name = "monday2.mp3"
+        voice_name = "michal.wav"
         voice_path = os.path.join("generators", "voices", voice_name)
         self.voice = os.path.abspath(voice_path)
         if os.name == "nt":

@@ -6,3 +6,6 @@
 subtitles
 dialogs
 __pycache__
+
+dist
+build
