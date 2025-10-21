@@ -109,7 +109,7 @@ class AudioBrowserWindow(ctk.CTkToplevel):
         identifier = str(original_index + 1)
         files = self._find_audio_files(identifier)
         if files:
-            self.play_audio(files[0])
+            self.play_audio(files[0][0])
 
     # =====================
     # AUDIO
