@@ -19,7 +19,7 @@ datas = [
     ('assets', 'assets')
 ]
 
-name = "SubtitleCleaner"
+name = "SubtitleStudio"
 
 excluded_modules = [
     'torch',

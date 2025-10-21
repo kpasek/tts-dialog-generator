@@ -1,12 +1,3 @@
-"""
-Subtitle Cleaner - updated skeleton with:
-- Configuration now includes subtitle file path (auto-load on config load)
-- Max column width for pattern lists set to ~300px, vertically stretched columns
-- Pattern areas split evenly vertically
-- After processing, two buttons appear to download files instead of asking twice during apply
-- Added inline fields to add new patterns directly (pattern, replace text, ignore case checkbox)
-"""
-
 from __future__ import annotations
 
 import os.path
@@ -18,15 +9,15 @@ import re, csv, json, sys
 from dataclasses import dataclass, asdict
 from typing import List, Optional
 from pathlib import Path
-from PIL import Image, ImageTk
-from nltk import align
 
 from app.tooltip import CreateToolTip
 
 from customtkinter import CTkFrame, CTkScrollableFrame
 
-APP_TITLE = "Subtitle Cleaner"
-DEFAULT_CONFIG = Path.cwd() / ".subtitle_cleaner_config.json"
+from audio.browser import AudioBrowserWindow
+
+APP_TITLE = "Subtitle Studio"
+APP_CONFIG = Path.cwd() / ".subtitle_studio_config.json"
 MAX_COL_WIDTH = 450
 
 
@@ -116,17 +107,13 @@ def apply_replace_patterns(lines: List[str], patterns: List[PatternItem]) -> Lis
     return out
 
 
-class SubtitleCleanerApp(ctk.CTk):
+class SubtitleStudioApp(ctk.CTk):
     def __init__(self):
         super().__init__()
         self.title(APP_TITLE)
         self.geometry("1600x1000")
         try:
-            # ico = Image.open(resource_path(os.path.join("assets", "icon512.png")))
-            # photo = ImageTk.PhotoImage(ico)
-            # self.wm_iconphoto(False, photo)
             self.iconphoto(False, tk.PhotoImage(file=resource_path("assets/icon512.png")))
-
         except Exception:
             pass
 
@@ -142,29 +129,33 @@ class SubtitleCleanerApp(ctk.CTk):
         self.custom_remove: List[PatternItem] = []
         self.custom_replace: List[PatternItem] = []
 
-        self.current_config_path: Optional[Path] = None
+        self.current_project_path: Optional[Path] = None
 
         self.processed_clean: List[str] = []
         self.processed_replace: List[str] = []
 
+        self.project_config = {}
+
         self._create_menu()
         self._create_widgets()
-        self._load_default_config()
+        self._load_app_config()
 
     def _create_menu(self):
         menubar = tk.Menu(self)
         config_menu = tk.Menu(menubar, tearoff=0)
         config_menu.add_command(label="Otwórz projekt", command=self.open_project)
-        config_menu.add_command(label="Zapisz projekt", command=self.save_config)
-        config_menu.add_command(label="Zapisz jako...", command=self.save_config_as)
+        config_menu.add_command(label="Zapisz projekt", command=self.save_project)
+        config_menu.add_command(label="Zapisz jako...", command=self.save_project_as)
+        # config_menu.add_separator()
+        # config_menu.add_command(label="Zamknij projekt", command=self.close_project)
         config_menu.add_separator()
         config_menu.add_command(label="Zamknij", command=self.quit)
         menubar.add_cascade(label="Projekt", menu=config_menu)
 
         gen_menu = tk.Menu(menubar, tearoff=0)
         gen_menu.add_command(label="Generuj dialogi", command=self.generate_dialogs)
-        gen_menu.add_command(label="Przygotuj audio", command=self.process_audio)
-        menubar.add_cascade(label="Generator", menu=gen_menu)
+        gen_menu.add_command(label="Przeglądaj dialogi", command=self.audio_preview)
+        menubar.add_cascade(label="Dialogi", menu=gen_menu)
 
         self.config(menu=menubar)
 
@@ -297,8 +288,8 @@ class SubtitleCleanerApp(ctk.CTk):
             cb.pack(anchor="w", pady=2)
 
     def add_inline_remove(self):
-        pattern = self.ent_remove_pattern.get().strip()
-        replace = self.ent_remove_replace.get().strip()
+        pattern = self.ent_remove_pattern.get()
+        replace = self.ent_remove_replace.get()
         case_sensitive = self.var_remove_ignore.get()
         if not pattern:
             return
@@ -311,8 +302,8 @@ class SubtitleCleanerApp(ctk.CTk):
         self.custom_remove.append(PatternItem(pattern, replace, not case_sensitive))
 
     def add_inline_replace(self):
-        pattern = self.ent_replace_pattern.get().strip()
-        replace = self.ent_replace_replace.get().strip()
+        pattern = self.ent_replace_pattern.get()
+        replace = self.ent_replace_replace.get()
         case_sensitive = self.var_replace_ignore.get()
         if not pattern:
             return
@@ -327,7 +318,7 @@ class SubtitleCleanerApp(ctk.CTk):
         row = ctk.CTkFrame(frame)
         row.pack(fill="x", pady=2, padx=2)
 
-        lbl = ctk.CTkLabel(row, text=f"{pattern} -> {replace} {'' if ignore else '(Aa)'}")
+        lbl = ctk.CTkLabel(row, text=f"[{pattern}] -> [{replace}] {'' if ignore else '(Aa)'}")
         lbl.pack(side="left", fill="x", expand=False, padx=4)
 
         btnX = ctk.CTkButton(row, text="X", width=60, command=lambda r=row: r.destroy())
@@ -353,8 +344,8 @@ class SubtitleCleanerApp(ctk.CTk):
         except Exception as e:
             messagebox.showerror("Błąd", f"Nie udało się wczytać pliku:\n{e}")
 
-    def open_project(self):
-        path = filedialog.askopenfilename(title="Otwórz projekt", filetypes=[("JSON", "*.json"), ("All", "*")])
+    def open_project(self, path: str | None = None):
+        path = filedialog.askopenfilename(title="Otwórz projekt", filetypes=[("JSON", "*.json"), ("All", "*")]) if path is None else path
         if not path:
             return
         try:
@@ -369,61 +360,59 @@ class SubtitleCleanerApp(ctk.CTk):
             self.custom_remove = [PatternItem.from_json(x) for x in cfg.get("custom_remove", [])]
             self.custom_replace = [PatternItem.from_json(x) for x in cfg.get("custom_replace", [])]
             self._refresh_custom_lists()
-            self.current_config_path = Path(path)
+            self.current_project_path = Path(path)
 
             subtitle_path = cfg.get("subtitle_path")
             if subtitle_path and Path(subtitle_path).exists():
                 self.load_file(subtitle_path)
 
             self.set_status("Wczytano projekt")
+            self.save_app_setting('last_project', path)
+            self.project_config = cfg
         except Exception as e:
             messagebox.showerror("Błąd", f"Nie udało się wczytać konfiguracji:\n{e}")
 
-    def save_config(self):
-        if not self.current_config_path:
-            return self.save_config_as()
-        cfg = self._gather_config()
+    def set_project_config(self, param, value):
+        cfg = self._gather_project_config()
+        cfg[param] = value
+        self.save_project(cfg)
+
+    def save_project(self, cfg: dict | None = None):
+        if not self.current_project_path:
+            return self.save_project_as()
+        cfg = self._gather_project_config() if cfg is None else cfg
+        self.project_config = cfg
         try:
-            with open(self.current_config_path, "w", encoding="utf-8") as f:
+            with open(self.current_project_path, "w", encoding="utf-8") as f:
                 json.dump(cfg, f, indent=2, ensure_ascii=False)
             self.set_status("Zapisano projekt")
         except Exception as e:
             messagebox.showerror("Błąd", f"Nie udało się zapisać konfiguracji:\n{e}")
 
-    def save_config_as(self):
+    def save_project_as(self):
         path = filedialog.asksaveasfilename(defaultextension=".json", filetypes=[("JSON", "*.json")])
         if not path:
             return
-        self.current_config_path = Path(path)
-        self.save_config()
+        self.current_project_path = Path(path)
+        self.save_project()
 
-    def _gather_config(self):
+    def _gather_project_config(self) -> dict:
         return {
             "builtin_remove_state": [bool(v.get()) for v in self.builtin_remove_state],
             "builtin_replace_state": [bool(v.get()) for v in self.builtin_replace_state],
             "custom_remove": [p.to_json() for p in self.custom_remove],
             "custom_replace": [p.to_json() for p in self.custom_replace],
-            "subtitle_path": str(self.loaded_path) if self.loaded_path else None
+            "subtitle_path": str(self.loaded_path) if self.loaded_path else None,
+            "audio_path": self.project_config.get('audio_path'),
         }
 
-    def _load_default_config(self):
-        if DEFAULT_CONFIG.exists():
+    def _load_app_config(self):
+        if APP_CONFIG.exists():
             try:
-                with open(DEFAULT_CONFIG, "r", encoding="utf-8") as f:
+                with open(APP_CONFIG, "r", encoding="utf-8") as f:
                     cfg = json.load(f)
-                for i, val in enumerate(cfg.get("builtin_remove_state", [])):
-                    if i < len(self.builtin_remove_state):
-                        self.builtin_remove_state[i].set(bool(val))
-                for i, val in enumerate(cfg.get("builtin_replace_state", [])):
-                    if i < len(self.builtin_replace_state):
-                        self.builtin_replace_state[i].set(bool(val))
-                self.custom_remove = [PatternItem.from_json(x) for x in cfg.get("custom_remove", [])]
-                self.custom_replace = [PatternItem.from_json(x) for x in cfg.get("custom_replace", [])]
-                self._refresh_custom_lists()
-                subtitle_path = cfg.get("subtitle_path")
-                if subtitle_path and Path(subtitle_path).exists():
-                    self.load_file(subtitle_path)
-                self.set_status("Wczytano domyślny projekt")
+                if cfg.get('last_project'):
+                    self.open_project(cfg.get('last_project'))
             except Exception:
                 pass
 
@@ -558,8 +547,12 @@ class SubtitleCleanerApp(ctk.CTk):
     def generate_dialogs(self):
         messagebox.showinfo('Generuj dialogi', 'Funkcja generowania dialogów - placeholder')
 
-    def process_audio(self):
-        messagebox.showinfo('Przygotuj', 'Funkcja przetwarzania audio')
+    def audio_preview(self):
+        if not self.processed_replace:
+            messagebox.showwarning("Brak danych", "Najpierw przetwórz dialogi, aby zobaczyć podgląd.")
+            return
+        project_cfg = self._gather_project_config()
+        AudioBrowserWindow(self, project_cfg, self.set_project_config)
 
     def remove_audio_by(self):
         messagebox.showinfo('Przygotuj', 'Funkcja przetwarzania audio')
@@ -573,25 +566,20 @@ class SubtitleCleanerApp(ctk.CTk):
             return  # Anulowano wybór
 
         try:
-            with open(file_path, newline='', encoding="utf-8") as csvfile:
-                reader = csv.DictReader(csvfile)
-                count = 0
+            count = 0
+            with open(file_path, "r", encoding="utf-8") as f:
+                reader = csv.reader(f)
                 for row in reader:
-                    pattern = row.get("pattern", "").strip()
-
+                    if not row or len(row) < 2:
+                        continue
+                    pattern = row[0]
                     if not pattern:
                         continue
+                    replace = row[1] if len(row) > 1 else ""
+                    case_sensitive = bool(int(row[2])) if len(row) > 2 and row[2].isdigit() else False
 
-                    replace = row.get("replace", "").strip()
-                    case = row.get("case_sensitive")
-                    if case is not None:
-                        case_sensitive_str = case.strip().lower()
-                        case_sensitive = case_sensitive_str in ("true", "1", "yes")
-                    else:
-                        case_sensitive = False
-
-                    # Dodaj do GUI i listy custom_replace
                     self.add_row(self.custom_replace_frame, not case_sensitive, pattern, replace)
+
                     self.custom_replace.append(PatternItem(pattern, replace, not case_sensitive))
                     count += 1
 
@@ -599,9 +587,24 @@ class SubtitleCleanerApp(ctk.CTk):
         except Exception as e:
             messagebox.showerror("Błąd importu", f"Nie udało się zaimportować pliku:\n{e}")
 
+    def save_app_setting(self, param, value):
+        if not APP_CONFIG.exists():
+            with open(APP_CONFIG.absolute(), "w", encoding="utf-8") as f:
+                json.dump({param: value}, f)
+            return
+        try:
+            with open(APP_CONFIG, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
+            cfg.set(param, value)
+            with open(APP_CONFIG.absolute(), "w", encoding="utf-8") as f:
+                json.dump({param: value}, f)
+
+        except Exception:
+            pass
+
 
 if __name__ == '__main__':
     ctk.set_appearance_mode('System')
     ctk.set_default_color_theme('blue')
-    app = SubtitleCleanerApp()
+    app = SubtitleStudioApp()
     app.mainloop()
