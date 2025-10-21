@@ -181,7 +181,7 @@ class AudioBrowserWindow(ctk.CTkToplevel):
         path = filedialog.askdirectory(title="Wybierz katalog audio", parent=self)
         if path:
             self.audio_dir = Path(path)
-            self.save_project_config()
+            self.save_project()
 
     def save_project(self):
         abs_dir = str(self.audio_dir.absolute())
