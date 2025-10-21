@@ -163,7 +163,6 @@ torchcodec==0.8.0
 tqdm==4.67.1
 trainer==0.0.36
 transformers==4.49.0
-triton==3.5.0
 TTS==0.22.0
 typeguard==4.4.4
 typer==0.19.2

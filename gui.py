@@ -5,36 +5,27 @@ import os.path
 import customtkinter as ctk
 import tkinter as tk
 from tkinter import filedialog, messagebox
-import re, csv, json, sys
-from dataclasses import dataclass, asdict
+import re, csv, json, sys, os  # sys i os są potrzebne do close_project
 from typing import List, Optional
 from pathlib import Path
 
+import threading
+
+from app.settings import SettingsWindow
+from app.utils import apply_remove_patterns, apply_replace_patterns, resource_path
+from generators.xtts import XTTSPolishTTS
+
+from app.entity import PatternItem
 from app.tooltip import CreateToolTip
 
 from customtkinter import CTkFrame, CTkScrollableFrame
 
 from audio.browser import AudioBrowserWindow
+from audio.deleter import AudioDeleterWindow
 
 APP_TITLE = "Subtitle Studio"
 APP_CONFIG = Path.cwd() / ".subtitle_studio_config.json"
 MAX_COL_WIDTH = 450
-
-
-@dataclass
-class PatternItem:
-    pattern: str
-    replace: str = ""
-    ignore_case: bool = True,
-    name: str | None = None
-
-    def to_json(self):
-        return asdict(self)
-
-    @classmethod
-    def from_json(cls, d):
-        return cls(d.get("pattern", ""), d.get("replace", ""), d.get("ignore_case", True),  d.get("name", None))
-
 
 BUILTIN_REMOVE = [
     (PatternItem(r"^\[[^\]]*\]+$", "", True), "Usuń całe linie [.*]"),
@@ -54,57 +45,12 @@ BUILTIN_REPLACE = [
     (PatternItem(r"\?!", "?", True), "?! -> ?"),
     (PatternItem(r"\?{2,}", "?", True), "?(?)+ -> ?"),
     (PatternItem(r"[@#$^&*\(\)\{\}]+", " ", True), "Usuń znaki specjalne jak @#$"),
-    (PatternItem( r"\s{2,}", " ", True), "Zamień białe znaki na spacje"),
-    (PatternItem( r"^[-.\"\']", "", True), "Usuń wiodące znaki specjalne (-.\"')"),
-    (PatternItem( r"[-.\"\']$", "", True), "Usuń kończące znaki specjalne (-.\"')"),
+    (PatternItem(r"\s{2,}", " ", True), "Zamień białe znaki na spacje"),
+    (PatternItem(r"^[-.\"\']", "", True), "Usuń wiodące znaki specjalne (-.\"')"),
+    (PatternItem(r"[-\.\"\']$", "", True), "Usuń kończące znaki specjalne (-.\"')"),
 ]
 
 
-def compile_pattern(pat: PatternItem):
-    flags = re.IGNORECASE if pat.ignore_case else 0
-    return re.compile(pat.pattern, flags)
-
-
-def apply_remove_patterns(lines: List[str], patterns: List[PatternItem]) -> List[str]:
-    try:
-        compiled = [compile_pattern(p) for p in patterns]
-    except Exception as e:
-        messagebox.showerror("Błąd", f"Nieprawidłowy pattern:\n{e}")
-
-        return []
-
-    out = []
-    for line in lines:
-        s = line
-        for i, pat in enumerate(patterns):
-            s = compiled[i].sub(pat.replace, s)
-        if s.strip():
-            out.append(s)
-    seen = set()
-    uniq = []
-    for l in out:
-        if l not in seen:
-            uniq.append(l)
-            seen.add(l)
-    return uniq
-
-def resource_path(relative_path: str) -> str:
-    if hasattr(sys, '_MEIPASS'):
-        base_path = sys._MEIPASS
-    else:
-        base_path = os.path.abspath(".")
-
-    return os.path.join(base_path, relative_path)
-
-def apply_replace_patterns(lines: List[str], patterns: List[PatternItem]) -> List[str]:
-    compiled = [compile_pattern(p) for p in patterns]
-    out = []
-    for line in lines:
-        s = line
-        for i, pat in enumerate(patterns):
-            s = compiled[i].sub(pat.replace, s)
-        out.append(s)
-    return out
 
 
 class SubtitleStudioApp(ctk.CTk):
@@ -116,7 +62,6 @@ class SubtitleStudioApp(ctk.CTk):
             self.iconphoto(False, tk.PhotoImage(file=resource_path("assets/icon512.png")))
         except Exception:
             pass
-
 
         self.loaded_path: Optional[Path] = None
         self.original_lines: List[str] = []
@@ -135,6 +80,15 @@ class SubtitleStudioApp(ctk.CTk):
         self.processed_replace: List[str] = []
 
         self.project_config = {}
+        # Przechowuje całą globalną konfigurację (z .subtitle_studio_config.json)
+        self.global_config = {}
+
+        # Przechowuje załadowany model TTS, aby nie ładować go wielokrotnie
+        self.tts_model: Optional[XTTSPolishTTS] = None
+        # Blokada uniemożliwiająca jednoczesne generowanie (np. pojedynczego pliku i wszystkich)
+        self.generation_lock = threading.Lock()
+
+        self.cancel_generation_event = threading.Event()
 
         self._create_menu()
         self._create_widgets()
@@ -146,15 +100,21 @@ class SubtitleStudioApp(ctk.CTk):
         config_menu.add_command(label="Otwórz projekt", command=self.open_project)
         config_menu.add_command(label="Zapisz projekt", command=self.save_project)
         config_menu.add_command(label="Zapisz jako...", command=self.save_project_as)
-        # config_menu.add_separator()
-        # config_menu.add_command(label="Zamknij projekt", command=self.close_project)
+
+        config_menu.add_separator()
+        config_menu.add_command(label="Zamknij projekt", command=self.close_project)
+
+        config_menu.add_separator()
+        config_menu.add_command(label="Ustawienia", command=self.open_settings_window)
+
         config_menu.add_separator()
         config_menu.add_command(label="Zamknij", command=self.quit)
         menubar.add_cascade(label="Projekt", menu=config_menu)
 
         gen_menu = tk.Menu(menubar, tearoff=0)
-        gen_menu.add_command(label="Generuj dialogi", command=self.generate_dialogs)
-        gen_menu.add_command(label="Przeglądaj dialogi", command=self.audio_preview)
+        gen_menu.add_command(label="Przeglądaj/Generuj dialogi", command=self.audio_preview)
+        gen_menu.add_separator()
+        gen_menu.add_command(label="Masowe usuwanie dialogów", command=self.open_audio_deleter)
         menubar.add_cascade(label="Dialogi", menu=gen_menu)
 
         self.config(menu=menubar)
@@ -218,7 +178,6 @@ class SubtitleStudioApp(ctk.CTk):
 
         ctk.CTkButton(replace_top_frame, text="Importuj", command=self.import_patterns_from_csv).pack(side="right")
 
-
         # przewijana lista custom patterns do zamiany
         self.custom_replace_frame = ctk.CTkScrollableFrame(self.center_frame)
         self.custom_replace_frame.grid(row=4, column=0, sticky="nsew", padx=6, pady=(2, 6))
@@ -245,7 +204,8 @@ class SubtitleStudioApp(ctk.CTk):
 
         ctk.CTkButton(right, text="Zastosuj", command=self.apply_processing).pack(anchor="w")
 
-        self.btn_download_clean = ctk.CTkButton(right, text="Pobierz - napisy dla Game Reader", command=self.download_clean)
+        self.btn_download_clean = ctk.CTkButton(right, text="Pobierz - napisy dla Game Reader",
+                                                command=self.download_clean)
         self.btn_download_replace = ctk.CTkButton(right, text="Pobierz - napisy dla TTS", command=self.download_replace)
         self.btn_download_clean.pack_forget()
         self.btn_download_replace.pack_forget()
@@ -294,12 +254,13 @@ class SubtitleStudioApp(ctk.CTk):
         if not pattern:
             return
 
-        self.add_row(self.custom_remove_frame, not case_sensitive, pattern, replace)
+        # BUGFIX: Create item, add to list, then pass item and list to add_row
+        new_pattern = PatternItem(pattern, replace, not case_sensitive)
+        self.custom_remove.append(new_pattern)
+        self.add_row(self.custom_remove_frame, new_pattern, self.custom_remove)
 
         self.ent_remove_pattern.delete(0, "end")
         self.ent_remove_replace.delete(0, "end")
-
-        self.custom_remove.append(PatternItem(pattern, replace, not case_sensitive))
 
     def add_inline_replace(self):
         pattern = self.ent_replace_pattern.get()
@@ -308,26 +269,42 @@ class SubtitleStudioApp(ctk.CTk):
         if not pattern:
             return
 
-        self.add_row(self.custom_replace_frame, not case_sensitive, pattern, replace)
+        # BUGFIX: Create item, add to list, then pass item and list to add_row
+        new_pattern = PatternItem(pattern, replace, not case_sensitive)
+        self.custom_replace.append(new_pattern)
+        self.add_row(self.custom_replace_frame, new_pattern, self.custom_replace)
 
         self.ent_replace_pattern.delete(0, "end")
         self.ent_replace_replace.delete(0, "end")
-        self.custom_replace.append(PatternItem(pattern, replace, not case_sensitive))
 
-    def add_row(self, frame, ignore: bool, pattern: str, replace: str):
+    def add_row(self, frame, pattern_item: PatternItem, target_list: List[PatternItem]):
+        """
+        BUGFIX: Ta metoda przyjmuje teraz PatternItem i listę, do której on należy,
+        aby przycisk 'X' mógł usunąć obiekt z listy danych, a nie tylko z GUI.
+        """
         row = ctk.CTkFrame(frame)
         row.pack(fill="x", pady=2, padx=2)
 
-        lbl = ctk.CTkLabel(row, text=f"[{pattern}] -> [{replace}] {'' if ignore else '(Aa)'}")
+        lbl = ctk.CTkLabel(row,
+                           text=f"[{pattern_item.pattern}] -> [{pattern_item.replace}] {'' if pattern_item.ignore_case else '(Aa)'}")
         lbl.pack(side="left", fill="x", expand=False, padx=4)
 
-        btnX = ctk.CTkButton(row, text="X", width=60, command=lambda r=row: r.destroy())
+        def on_delete():
+            try:
+                target_list.remove(pattern_item)  # Usuń z listy danych
+            except ValueError:
+                # Może się zdarzyć, jeśli lista została zmodyfikowana gdzie indziej
+                print(f"Ostrzeżenie: Nie znaleziono {pattern_item} na liście {target_list}")
+                pass
+            row.destroy()  # Usuń z GUI
+
+        btnX = ctk.CTkButton(row, text="X", width=60, command=on_delete)
         btnX.pack(side="right", padx=4)
 
     def load_file(self, path: Optional[str] = None):
         if not path:
-            initial_dir = None
-            if os.path.exists("subtitles"):
+            initial_dir = self.global_config.get('start_directory')
+            if not initial_dir and os.path.exists("subtitles"):
                 initial_dir = "subtitles"
             path = filedialog.askopenfilename(title="Wybierz plik napisów",
                                               filetypes=[("Text files", "*.txt"), ("All files", "*")],
@@ -345,7 +322,11 @@ class SubtitleStudioApp(ctk.CTk):
             messagebox.showerror("Błąd", f"Nie udało się wczytać pliku:\n{e}")
 
     def open_project(self, path: str | None = None):
-        path = filedialog.askopenfilename(title="Otwórz projekt", filetypes=[("JSON", "*.json"), ("All", "*")]) if path is None else path
+        if path is None:
+            initial_dir = self.global_config.get('start_directory')
+            path = filedialog.askopenfilename(title="Otwórz projekt",
+                                              filetypes=[("JSON", "*.json"), ("All", "*")],
+                                              initialdir=initial_dir)
         if not path:
             return
         try:
@@ -372,6 +353,20 @@ class SubtitleStudioApp(ctk.CTk):
         except Exception as e:
             messagebox.showerror("Błąd", f"Nie udało się wczytać konfiguracji:\n{e}")
 
+    def close_project(self):
+        """Usuwa ścieżkę do ostatniego projektu i ponownie uruchamia aplikację."""
+        try:
+            # 1. Zapisz konfigurację globalną bez 'last_project'
+            self.save_app_setting('last_project', None)
+
+            # 2. Zrestartuj aplikację
+            # os.execl zastępuje bieżący proces nowym
+            os.execl(sys.executable, sys.executable, *sys.argv)
+        except Exception as e:
+            messagebox.showerror("Błąd restartu",
+                                 f"Nie udało się zrestartować aplikacji:\n{e}\n\nProszę zamknąć i otworzyć program ręcznie.")
+
+
     def set_project_config(self, param, value):
         cfg = self._gather_project_config()
         cfg[param] = value
@@ -397,24 +392,30 @@ class SubtitleStudioApp(ctk.CTk):
         self.save_project()
 
     def _gather_project_config(self) -> dict:
-        return {
+        # Upewnij się, że zachowujemy ustawienia, których GUI nie zna
+        current_cfg = self.project_config.copy()
+
+        current_cfg.update({
             "builtin_remove_state": [bool(v.get()) for v in self.builtin_remove_state],
             "builtin_replace_state": [bool(v.get()) for v in self.builtin_replace_state],
             "custom_remove": [p.to_json() for p in self.custom_remove],
             "custom_replace": [p.to_json() for p in self.custom_replace],
             "subtitle_path": str(self.loaded_path) if self.loaded_path else None,
             "audio_path": self.project_config.get('audio_path'),
-        }
+            # base_audio_speed jest zapisywane przez set_project_config
+        })
+        return current_cfg
 
     def _load_app_config(self):
         if APP_CONFIG.exists():
             try:
                 with open(APP_CONFIG, "r", encoding="utf-8") as f:
-                    cfg = json.load(f)
-                if cfg.get('last_project'):
-                    self.open_project(cfg.get('last_project'))
+                    self.global_config = json.load(f)
+                if self.global_config.get('last_project'):
+                    self.open_project(self.global_config.get('last_project'))
+
             except Exception:
-                pass
+                pass  # Ignoruj błędy, załaduj domyślne
 
     def filter_preview(self, lines):
         if not self.search_entry.get():
@@ -426,14 +427,21 @@ class SubtitleStudioApp(ctk.CTk):
         return filtered
 
     def _refresh_custom_lists(self):
-        self.custom_remove_frame = self.build_scroll_list_frame(2)
+        # Niszczy stare ramki i buduje nowe
+        if hasattr(self, 'custom_remove_frame'):
+            self.custom_remove_frame.destroy()
+        if hasattr(self, 'custom_replace_frame'):
+            self.custom_replace_frame.destroy()
+
+        self.custom_remove_frame = self.build_scroll_list_frame(1)  # Zmieniony row_nr na 1
         self.custom_remove_frame.grid(row=1, column=0, sticky="nsew", padx=6, pady=(2, 6))
         for p in self.custom_remove:
-            self.add_row(self.custom_remove_frame, p.ignore_case, p.pattern, p.replace)
-        self.custom_replace_frame = self.build_scroll_list_frame(5)
+            self.add_row(self.custom_remove_frame, p, self.custom_remove)  # BUGFIX: Przekaż PatterItem i listę
+
+        self.custom_replace_frame = self.build_scroll_list_frame(4)  # Zmieniony row_nr na 4
         self.custom_replace_frame.grid(row=4, column=0, sticky="nsew", padx=6, pady=(2, 6))
         for p in self.custom_replace:
-            self.add_row(self.custom_replace_frame, p.ignore_case, p.pattern, p.replace)
+            self.add_row(self.custom_replace_frame, p, self.custom_replace)  # BUGFIX: Przekaż PatterItem i listę
 
     def _gather_active_patterns(self):
         remove_patterns = []
@@ -543,24 +551,38 @@ class SubtitleStudioApp(ctk.CTk):
     def set_status(self, txt: str):
         self.status.configure(text=txt)
 
-    # placeholders
-    def generate_dialogs(self):
-        messagebox.showinfo('Generuj dialogi', 'Funkcja generowania dialogów - placeholder')
-
     def audio_preview(self):
         if not self.processed_replace:
             messagebox.showwarning("Brak danych", "Najpierw przetwórz dialogi, aby zobaczyć podgląd.")
             return
         project_cfg = self._gather_project_config()
-        AudioBrowserWindow(self, project_cfg, self.set_project_config)
+        win = AudioBrowserWindow(self, project_cfg, self.set_project_config, self.cancel_generation_event)
+        win.lift()
+        win.focus_force()
 
-    def remove_audio_by(self):
-        messagebox.showinfo('Przygotuj', 'Funkcja przetwarzania audio')
+    def open_audio_deleter(self):
+        """Otwiera okno masowego usuwania plików audio."""
+        if not self.processed_replace:
+            messagebox.showwarning("Brak danych", "Najpierw przetwórz dialogi (Zastosuj).", parent=self)
+            return
+        if not self.project_config.get("audio_path"):
+            messagebox.showwarning("Brak katalogu", "Najpierw ustaw katalog audio w przeglądarce dialogów.",
+                                   parent=self)
+            return
+
+        deleter_win = AudioDeleterWindow(self, self.processed_replace, self.project_config.get("audio_path"))
+        deleter_win.grab_set()  # Okno modalne
+
+    def open_settings_window(self):
+        win = SettingsWindow(self)
+        win.grab_set()
 
     def import_patterns_from_csv(self):
+        initial_dir = self.global_config.get('start_directory')
         file_path = filedialog.askopenfilename(
             title="Wybierz plik CSV",
-            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")]
+            filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
+            initialdir=initial_dir
         )
         if not file_path:
             return  # Anulowano wybór
@@ -578,29 +600,28 @@ class SubtitleStudioApp(ctk.CTk):
                     replace = row[1] if len(row) > 1 else ""
                     case_sensitive = bool(int(row[2])) if len(row) > 2 and row[2].isdigit() else False
 
-                    self.add_row(self.custom_replace_frame, not case_sensitive, pattern, replace)
-
-                    self.custom_replace.append(PatternItem(pattern, replace, not case_sensitive))
+                    # BUGFIX: Użyj poprawionej logiki dodawania
+                    new_pattern = PatternItem(pattern, replace, not case_sensitive)
+                    self.custom_replace.append(new_pattern)
+                    self.add_row(self.custom_replace_frame, new_pattern, self.custom_replace)
                     count += 1
 
             messagebox.showinfo("Import zakończony", f"Zaimportowano {count} wzorców.")
         except Exception as e:
             messagebox.showerror("Błąd importu", f"Nie udało się zaimportować pliku:\n{e}")
 
-    def save_app_setting(self, param, value):
-        if not APP_CONFIG.exists():
-            with open(APP_CONFIG.absolute(), "w", encoding="utf-8") as f:
-                json.dump({param: value}, f)
-            return
+    def save_global_config(self, new_config_data: dict):
+        """Zapisuje dane do globalnego pliku konfiguracyjnego."""
+        self.global_config.update(new_config_data)
         try:
-            with open(APP_CONFIG, "r", encoding="utf-8") as f:
-                cfg = json.load(f)
-            cfg.set(param, value)
             with open(APP_CONFIG.absolute(), "w", encoding="utf-8") as f:
-                json.dump({param: value}, f)
+                json.dump(self.global_config, f, indent=2, ensure_ascii=False)
+        except Exception as e:
+            messagebox.showerror("Błąd zapisu", f"Nie udało się zapisać globalnej konfiguracji: {e}")
 
-        except Exception:
-            pass
+    def save_app_setting(self, param, value):
+        """Zapisuje pojedynczą wartość w globalnym pliku konfiguracyjnym."""
+        self.save_global_config({param: value})
 
 
 if __name__ == '__main__':
