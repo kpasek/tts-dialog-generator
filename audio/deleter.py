@@ -12,11 +12,23 @@ from app.utils import compile_pattern
 
 
 class AudioDeleterWindow(ctk.CTkToplevel):
+    """
+    A modal window for batch-deleting audio files based on regex patterns
+    matched against dialog lines.
+    """
     def __init__(self, master, dialogs: List[str], audio_path: str):
+        """
+        Initializes the AudioDeleterWindow.
+
+        Args:
+            master: The parent window (SubtitleStudioApp).
+            dialogs: The list of processed dialog strings.
+            audio_path: The path to the main audio directory.
+        """
         super().__init__(master)
         self.dialogs = dialogs
         self.audio_dir = Path(audio_path)
-        self.custom_remove: List = []
+        self.custom_remove: List[PatternItem] = []
         self.files_to_delete: List[Path] = []
 
         self.title("Masowe usuwanie plików audio")
@@ -32,9 +44,10 @@ class AudioDeleterWindow(ctk.CTkToplevel):
             return
 
         self._create_widgets()
-        self.recalculate_stats()  # Pokaż stan początkowy (0)
+        self.recalculate_stats()
 
     def _create_widgets(self):
+        """Creates and places all UI widgets for this window."""
         main_frame = ctk.CTkFrame(self)
         main_frame.pack(fill="both", expand=True, padx=10, pady=10)
         main_frame.grid_columnconfigure(0, weight=1)
@@ -43,11 +56,9 @@ class AudioDeleterWindow(ctk.CTkToplevel):
         ctk.CTkLabel(main_frame, text="Wzorce REGEX do dopasowania linii dialogowych").grid(row=0, column=0, sticky="w",
                                                                                             padx=6)
 
-        # Przewijana lista custom patterns
         self.custom_remove_frame = ctk.CTkScrollableFrame(main_frame)
         self.custom_remove_frame.grid(row=1, column=0, sticky="nsew", padx=6, pady=(2, 6))
 
-        # Input
         clean_inline_frame = ctk.CTkFrame(main_frame)
         clean_inline_frame.grid(row=2, column=0, sticky="ew", pady=(4, 4))
 
@@ -61,7 +72,6 @@ class AudioDeleterWindow(ctk.CTkToplevel):
 
         ctk.CTkButton(clean_inline_frame, text="Dodaj", command=self.add_inline_remove).pack(side="left", padx=2)
 
-        # Stats i przyciski akcji
         stats_frame = ctk.CTkFrame(main_frame)
         stats_frame.grid(row=3, column=0, sticky="ew", pady=10)
         stats_frame.grid_columnconfigure(1, weight=1)
@@ -78,6 +88,7 @@ class AudioDeleterWindow(ctk.CTkToplevel):
                       hover_color="darkred").grid(row=2, column=1, sticky="e", padx=10, pady=10)
 
     def add_inline_remove(self):
+        """Adds a new regex pattern from the input field to the list."""
         pattern = self.ent_remove_pattern.get()
         case_sensitive = self.var_remove_ignore.get()
         if not pattern:
@@ -88,15 +99,22 @@ class AudioDeleterWindow(ctk.CTkToplevel):
         self.add_row(self.custom_remove_frame, new_pattern, self.custom_remove)
 
         self.ent_remove_pattern.delete(0, "end")
-        self.recalculate_stats()  # Przelicz po dodaniu
+        self.recalculate_stats()
 
     def add_row(self, frame, pattern_item: PatternItem, target_list: List[PatternItem]):
-        """Lokalna wersja add_row, używa tej samej logiki co naprawiona w SubtitleStudioApp."""
+        """
+        Adds a UI row for a pattern to the scrollable frame.
+
+        Args:
+            frame: The parent CTkScrollableFrame.
+            pattern_item: The PatternItem data object.
+            target_list: The list (self.custom_remove) to remove the item from.
+        """
         row = ctk.CTkFrame(frame)
         row.pack(fill="x", pady=2, padx=2)
 
         lbl = ctk.CTkLabel(row,
-                           text=f"[{pattern_item.pattern}] -> [{pattern_item.replace}] {'' if pattern_item.ignore_case else '(Aa)'}")
+                           text=f"[{pattern_item.pattern}] {'' if pattern_item.ignore_case else '(Aa)'}")
         lbl.pack(side="left", fill="x", expand=False, padx=4)
 
         def on_delete():
@@ -105,23 +123,35 @@ class AudioDeleterWindow(ctk.CTkToplevel):
             except ValueError:
                 pass
             row.destroy()
-            self.recalculate_stats()  # Przelicz po usunięciu
+            self.recalculate_stats()
 
         btnX = ctk.CTkButton(row, text="X", width=60, command=on_delete)
         btnX.pack(side="right", padx=4)
 
-    def _find_audio_files(self, identifier: str):
-        """Skopiowane z AudioBrowserWindow - znajduje pliki dla danego ID."""
+    def _find_audio_files(self, identifier: str) -> List[tuple[Path, bool]]:
+        """
+        Finds all audio files associated with a given dialog identifier.
+
+        Args:
+            identifier: The dialog line number (e.g., "123").
+
+        Returns:
+            A list of tuples, each containing a Path object and a boolean (True if in /ready/).
+        """
         candidates = [
             (self.audio_dir / f"output1 ({identifier}).wav", False),
             (self.audio_dir / f"output1 ({identifier}).ogg", False),
+            (self.audio_dir / f"output1 ({identifier}).mp3", False), # Dodano mp3 na wszelki wypadek
             (self.audio_dir / "ready" / f"output1 ({identifier}).ogg", True),
             (self.audio_dir / "ready" / f"output2 ({identifier}).ogg", True)
         ]
         return [(f, ready) for f, ready in candidates if f.exists()]
 
     def recalculate_stats(self):
-        """Skanuje dialogi, znajduje pasujące pliki i aktualizuje etykiety."""
+        """
+        Recalculates which files will be deleted based on the current regex patterns.
+        Updates the UI labels with the count of matched lines and files.
+        """
         if not self.custom_remove:
             self.lbl_lines.configure(text="Pasujące linie: 0")
             self.lbl_files.configure(text="Pliki do usunięcia: 0")
@@ -141,7 +171,7 @@ class AudioDeleterWindow(ctk.CTkToplevel):
             identifier = str(i + 1)
             is_match = False
             for pat in compiled_patterns:
-                if pat.search(line):  # Używamy search() - wystarczy dowolne dopasowanie
+                if pat.search(line):  # Any match in the line
                     is_match = True
                     break
 
@@ -156,8 +186,10 @@ class AudioDeleterWindow(ctk.CTkToplevel):
         self.lbl_files.configure(text=f"Pliki do usunięcia: {len(self.files_to_delete)}")
 
     def execute_deletion(self):
-        """Usuwa pliki po potwierdzeniu."""
-        self.recalculate_stats()  # Upewnij się, że lista jest aktualna
+        """
+        Performs the actual file deletion after a final confirmation prompt.
+        """
+        self.recalculate_stats()  # Ensure the list is up-to-date
 
         if not self.files_to_delete:
             messagebox.showinfo("Brak plików", "Brak plików do usunięcia.", parent=self)
@@ -185,4 +217,4 @@ class AudioDeleterWindow(ctk.CTkToplevel):
         else:
             messagebox.showinfo("Gotowe", f"Pomyślnie usunięto {deleted_count} plików.", parent=self)
 
-        self.recalculate_stats()  # Odśwież statystyki (powinny być 0)
+        self.recalculate_stats()  # Refresh stats (should be 0)

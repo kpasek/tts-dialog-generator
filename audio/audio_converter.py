@@ -2,12 +2,22 @@ from pydub import AudioSegment
 import os
 from concurrent.futures import ProcessPoolExecutor as Executor
 import math
-from typing import Dict, Optional
+from typing import Dict, Optional, Any
 
 
 class AudioConverter:
+    """
+    Handles audio conversion, applying speed changes and FFmpeg filters.
+    """
 
-    def __init__(self, base_speed: float = 1.1, filter_settings: Optional[Dict[str, str]] = None):
+    def __init__(self, base_speed: float = 1.1, filter_settings: Optional[Dict[str, Any]] = None):
+        """
+        Initializes the converter.
+
+        Args:
+            base_speed: The base speed multiplier for audio (e.g., 1.1).
+            filter_settings: A dictionary of filter configurations from global settings.
+        """
         self.base_speed = base_speed
         self.filter_settings = filter_settings if filter_settings is not None else {}
 
@@ -16,7 +26,14 @@ class AudioConverter:
 
     def calculate_base_speed(self, duration_ms: float) -> float:
         """
-        Zwraca współczynnik przyspieszenia w zależności od długości audio.
+        Calculates a dynamic speed multiplier based on audio duration.
+        Longer files are sped up slightly more.
+
+        Args:
+            duration_ms: The duration of the audio in milliseconds.
+
+        Returns:
+            The calculated speed multiplier.
         """
         duration_sec = duration_ms / 1000
         if duration_sec < 2:
@@ -31,21 +48,22 @@ class AudioConverter:
 
     def parse_ogg(self, input_file: str, output_file: str):
         """
-        input_file: ścieżka do pliku wejściowego .wav
-        output_file: ścieżka do pliku wyjściowego .wav
+        Converts a single audio file (.wav, .mp3, .ogg) to two .ogg files
+        in the /ready/ directory (output1 and output2) with filters applied.
+
+        Args:
+            input_file: Path to the source audio file.
+            output_file: Path for the 'output1' (base speed) .ogg file.
         """
 
         input_filename = os.path.basename(input_file)
         input_dir = os.path.dirname(output_file)
 
-        # Zakładamy, że nazwa pliku to "output1 (IDENTIFIER).wav"
-        base_name_match = os.path.splitext(input_filename)[0]  # np. "output1 (123)"
-
-        # Na wypadek gdyby nazwa była inna, próbujemy wyciąć "output1 "
+        base_name_match = os.path.splitext(input_filename)[0]
         if base_name_match.startswith("output1 "):
-            base_name = base_name_match[8:]  # np. "(123)"
+            base_name = base_name_match[8:]
         else:
-            base_name = base_name_match  # Zachowaj co jest
+            base_name = base_name_match
 
         output_path_speed = os.path.join(
             input_dir, f"output2 {base_name}.ogg")
@@ -56,8 +74,11 @@ class AudioConverter:
         print(f"Przetwarzam: {input_file} -> {output_file}")
 
         try:
+            # Pydub radzi sobie z różnymi formatami na wejściu
             if input_file.lower().endswith('.ogg'):
                 audio = AudioSegment.from_ogg(input_file)
+            elif input_file.lower().endswith('.mp3'):
+                audio = AudioSegment.from_mp3(input_file)
             else:
                 audio = AudioSegment.from_wav(input_file)
 
@@ -82,33 +103,31 @@ class AudioConverter:
 
     def export_file(self, audio: AudioSegment, output_file: str, speed: float):
         """
-        Eksportuje AudioSegment do pliku OGG i przepuszcza przez zestaw filtrów ffmpeg
-        zoptymalizowanych pod męski głos lektora.
+        Exports an AudioSegment to a temporary .ogg file, then runs FFmpeg
+        to apply filters and speed changes, saving the final .ogg file.
+
+        Args:
+            audio: The Pydub AudioSegment.
+            output_file: The final destination path for the .ogg file.
+            speed: The speed multiplier (atempo) to apply.
         """
         temp_file = output_file + ".temp.ogg"
+        # Eksportuj do ogg (pydub użyje libvorbis)
         audio.export(temp_file, format="ogg")
 
-        filter_str = ""
-
         filter_list = []
-        # Ważna jest kolejność!
         filter_order = ['highpass', 'lowpass', 'deesser', 'acompressor', 'loudnorm', 'alimiter']
 
         for filter_name in filter_order:
-            # self.filter_settings to teraz {'highpass': {'enabled': True, 'params': 'f=70'}, ...}
             config = self.filter_settings.get(filter_name)
-
-            # Sprawdź, czy filtr istnieje ORAZ czy jest włączony
             if config and config.get("enabled", False):
                 params = config.get("params")
-                if params:  # Dodaj filtr tylko jeśli ma zdefiniowane parametry
+                if params:
                     filter_list.append(f"{filter_name}={params}")
 
         filter_str = ",".join(filter_list)
-
         speed_filter = f"atempo={speed}" if speed != 1.0 else ""
 
-        # Połącz filtry (jeśli są) z przyspieszeniem
         if filter_str and speed_filter:
             final_filter_chain = f"{filter_str},{speed_filter}"
         elif filter_str:
@@ -116,46 +135,45 @@ class AudioConverter:
         elif speed_filter:
             final_filter_chain = speed_filter
         else:
-            final_filter_chain = ""  # Brak filtrów i brak przyspieszenia
+            final_filter_chain = ""
 
         if final_filter_chain:
-            command = f'ffmpeg -i "{temp_file}" -af "{final_filter_chain}" -y -loglevel error "{output_file}"'
+            # Użyj -c:a libvorbis dla pewności, chociaż ffmpeg powinien to wykryć
+            command = f'ffmpeg -i "{temp_file}" -af "{final_filter_chain}" -c:a libvorbis -y -loglevel error "{output_file}"'
         else:
-            # Jeśli nie ma żadnych filtrów, po prostu skopiuj plik
+            # Jeśli nie ma filtrów, po prostu skopiuj plik (szybciej)
             command = f'ffmpeg -i "{temp_file}" -c copy -y -loglevel error "{output_file}"'
 
-        # print(f"Executing FFmpeg: {command}") # Do debugowania
         os.system(command)
-        os.remove(temp_file)
 
-    def convert_audio(self):
-        # Ta metoda jest teraz głównie do testowania, główna logika jest w convert_dir
-        for audio_dir in os.listdir("dialogs"):
-            audio_dir = os.path.abspath(os.path.join("dialogs", audio_dir))
-            if not os.path.isdir(audio_dir):
-                continue
-            output_dir = os.path.join(audio_dir, "ready")
-
-            self.convert_dir(audio_dir, output_dir)
+        try:
+            os.remove(temp_file)
+        except Exception as e:
+            print(f"Ostrzeżenie: Nie udało się usunąć pliku tymczasowego {temp_file}: {e}")
 
     def convert_dir(self, audio_dir: str, output_dir: str):
+        """
+        Converts all audio files in `audio_dir` (excluding /ready/)
+        and saves them to `output_dir` using a process pool.
+
+        Args:
+            audio_dir: Source directory with raw .wav/.mp3/.ogg files.
+            output_dir: Target directory (usually '.../ready/').
+        """
         tasks_ogg = []
         os.makedirs(output_dir, exist_ok=True)
 
-        # Musimy przekazać instancję, aby worker znał ustawienia filtrów.
-        # Robimy to, przekazując self.parse_ogg jako callable.
-
         with Executor(max_workers=os.cpu_count()) as executor:
             for filename in os.listdir(audio_dir):
-                if filename.lower().endswith(".wav") or filename.lower().endswith(".ogg"):
-                    if filename.lower().endswith(".temp.ogg"):  # Pomiń pliki tymczasowe
+                if filename.lower().endswith((".wav", ".ogg", ".mp3")):
+                    if filename.lower().endswith(".temp.ogg"):
                         continue
 
                     input_path = os.path.join(audio_dir, filename)
-
                     output_path_ogg = self.build_output_file_path(filename, output_dir)
 
-                    tasks_ogg.append(executor.submit(self.parse_ogg, input_path, output_path_ogg))
+                    tasks_ogg.append(executor.submit(
+                        self.parse_ogg, input_path, output_path_ogg))
 
             for task_ogg in tasks_ogg:
                 task_ogg.result()
@@ -163,6 +181,16 @@ class AudioConverter:
         print(f"✅ Zakończono przetwarzanie wszystkich plików audio dla {audio_dir}")
 
     def build_output_file_path(self, filename: str, output_dir: str) -> str:
+        """
+        Constructs the standard 'output1 (ID).ogg' path.
+
+        Args:
+            filename: The source filename (e.g., "output1 (123).wav").
+            output_dir: The target directory.
+
+        Returns:
+            The full path for the 'output1' file.
+        """
         base_name_match = os.path.splitext(filename)[0]
         if base_name_match.startswith("output1 "):
             base_name = base_name_match[8:]

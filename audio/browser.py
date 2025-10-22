@@ -5,9 +5,8 @@ import os
 import re
 from pathlib import Path
 import pygame
-from typing import Optional, TYPE_CHECKING
+from typing import Optional, TYPE_CHECKING, Dict, Any, List
 
-# === NOWE IMPORTY ===
 import threading
 import queue
 
@@ -15,37 +14,45 @@ from app.utils import is_installed
 from audio.progress import GenerationProgressWindow
 if is_installed('torch'):
     from generators.xtts import XTTSPolishTTS
+from generators.google_cloud_tts import GoogleCloudTTS  # Zmieniona nazwa
+from generators.elevenlabs_tts import ElevenLabsTTS
+
 from audio.audio_converter import AudioConverter
 
-# ====================
-
-# Używamy TYPE_CHECKING, aby uniknąć cyklicznego importu,
-# ale zachować podpowiedzi typów
 if TYPE_CHECKING:
     from app.gui import SubtitleStudioApp
 
 
 class AudioBrowserWindow(ctk.CTkToplevel):
-    # === ZMIANA SYGNATURY ===
-    def __init__(self, master: 'SubtitleStudioApp', project_config: dict, save_project_config,
-                 cancel_event: threading.Event):
+    """
+    Modal window for browsing, playing, and generating audio files for dialog lines.
+    """
+
+    # === ZMIANA: Nowa sygnatura __init__ ===
+    def __init__(self, master: 'SubtitleStudioApp',
+                 project_config: dict,
+                 save_project_config,
+                 cancel_event: threading.Event,
+                 global_config: dict,
+                 active_model: str):
+
         super().__init__(master)
         self.master: 'SubtitleStudioApp' = master
         self.save_project_config = save_project_config
-        self.title("Przeglądaj i Generuj Dialogi")
-        self.geometry(master.geometry())  # dziedziczy rozmiar
-        self.project_config = project_config
-        self.audio_dir: Optional[Path] = None
-
-        # === NOWY ATRYBUT ===
         self.cancel_event = cancel_event
-        # ====================
+        self.project_config = project_config
+        self.global_config = global_config
+        self.active_model = active_model
+        # =======================================
+
+        self.title(f"Przeglądaj i Generuj Dialogi (Model: {active_model})")
+        self.geometry(master.geometry())
+        self.audio_dir: Optional[Path] = None
 
         if project_config.get('audio_path'):
             self.audio_dir = Path(project_config.get("audio_path"))
         else:
             self.choose_audio_dir()
-            # self.save_project() # choose_audio_dir teraz samo zapisuje
 
         if not self.audio_dir:
             messagebox.showerror("Błąd", "Katalog audio nie został wybrany. Zamykanie przeglądarki.", parent=self)
@@ -53,7 +60,7 @@ class AudioBrowserWindow(ctk.CTkToplevel):
             return
 
         self.dialogs = master.processed_replace
-        self.filtered_indices = []  # mapowanie widocznych pozycji na indeksy oryginalne
+        self.filtered_indices = []
         self.current_identifier = None
 
         self.progress_window: Optional[GenerationProgressWindow] = None
@@ -67,28 +74,24 @@ class AudioBrowserWindow(ctk.CTkToplevel):
                                    parent=self)
 
         self._create_widgets()
-        self.check_queue()  # Uruchom pętlę sprawdzającą kolejkę
+        self.check_queue()
 
-        # === POPRAWKA FOKUSU ===
-        self.lift()
-        self.focus_force()
-        # =======================
+        # Okno jest już modalne przez grab_set() w gui.py
+        # self.lift()
+        # self.focus_force()
 
-        # Zatrzymanie odtwarzania przy zamykaniu okna
         self.protocol("WM_DELETE_WINDOW", self.on_close)
 
     def on_close(self):
-        """Zatrzymuje muzykę i zamyka okno."""
-        try:
-            pygame.mixer.music.stop()
-        except Exception:
-            pass
+        """Stops audio and destroys the window on close."""
+        self.stop_audio()
         self.destroy()
 
     # =====================
     # UI
     # =====================
     def _create_widgets(self):
+        """Creates and places all UI widgets in this window."""
         root = ctk.CTkFrame(self)
         root.pack(fill="both", expand=True, padx=10, pady=10)
         root.grid_columnconfigure(0, weight=1)
@@ -135,11 +138,9 @@ class AudioBrowserWindow(ctk.CTkToplevel):
         ctk.CTkButton(top_frame, text="Generuj wszystkie brakujące", command=self.start_generate_all).pack(side="left",
                                                                                                            padx=4,
                                                                                                            pady=4)
-        # przewijalna lista bloków audio
         self.audio_scroll = ctk.CTkScrollableFrame(right)
         self.audio_scroll.grid(row=1, column=0, sticky="nsew", padx=6, pady=6)
 
-        # Status bar dla operacji na pojedynczych plikach
         self.status_label = ctk.CTkLabel(right, text="", anchor="w")
         self.status_label.grid(row=2, column=0, sticky="ew", padx=6)
 
@@ -147,14 +148,13 @@ class AudioBrowserWindow(ctk.CTkToplevel):
     # DIALOGS
     # =====================
     def refresh_dialog_list(self):
-        """Aktualizuje listę widocznych dialogów i zapisuje mapowanie indeksów."""
+        """Updates the visible dialog list based on the search filter."""
         pattern = self.search_entry.get().lower()
         self.dialog_list.delete(0, tk.END)
         self.filtered_indices = []
 
         for i, line in enumerate(self.dialogs):
             line_number_str = str(i + 1)
-
             if not pattern:
                 match = True
             else:
@@ -169,6 +169,7 @@ class AudioBrowserWindow(ctk.CTkToplevel):
                 self.filtered_indices.append(i)
 
     def on_select_dialog(self, event):
+        """Handles selection of a dialog in the listbox."""
         if not self.dialog_list.curselection():
             return
         list_index = self.dialog_list.curselection()[0]
@@ -177,7 +178,7 @@ class AudioBrowserWindow(ctk.CTkToplevel):
         self.load_audio_files(self.current_identifier)
 
     def on_double_click_dialog(self, event):
-        """Dwuklik na dialog odtwarza pierwszy plik audio (z pełnej listy, nie filtrowanej)."""
+        """Plays the first available audio file on double-click."""
         if not self.dialog_list.curselection():
             return
         list_index = self.dialog_list.curselection()[0]
@@ -190,7 +191,8 @@ class AudioBrowserWindow(ctk.CTkToplevel):
     # =====================
     # AUDIO
     # =====================
-    def _find_audio_files(self, identifier: str):
+    def _find_audio_files(self, identifier: str) -> List[tuple[Path, bool]]:
+        """Finds all existing audio files for a given dialog identifier."""
         if not self.audio_dir:
             return []
         candidates = [
@@ -202,7 +204,7 @@ class AudioBrowserWindow(ctk.CTkToplevel):
         return [(f, ready) for f, ready in candidates if f.exists()]
 
     def load_audio_files(self, identifier: str):
-        """Tworzy listę plików audio jako bloki z labelami i przyciskami."""
+        """Reloads the list of audio files for the selected dialog."""
         for widget in self.audio_scroll.winfo_children():
             widget.destroy()
 
@@ -218,7 +220,8 @@ class AudioBrowserWindow(ctk.CTkToplevel):
             for file, ready in found:
                 self._create_audio_block(file, ready)
 
-    def _create_audio_block(self, file: Path, ready=False):
+    def _create_audio_block(self, file: Path, ready: bool):
+        """Creates a single UI block for an audio file with play/delete buttons."""
         block = ctk.CTkFrame(self.audio_scroll)
         block.pack(fill="x", pady=4, padx=6)
         file_name = ("ready/" if ready else "") + str(file.name)
@@ -233,9 +236,23 @@ class AudioBrowserWindow(ctk.CTkToplevel):
         ctk.CTkButton(btn_frame, text="❌ Usuń", width=80, command=lambda f=file: self.delete_audio(f)).pack(
             side="left", padx=4)
 
-    def play_audio(self, file: Path, speed: float = 1.0):
+    def stop_audio(self):
+        """Stops and unloads any currently playing audio file to release the lock."""
+        try:
+            pygame.mixer.music.stop()
+            pygame.mixer.music.unload()  # Ważne, aby zwolnić plik
+        except Exception:
+            pass  # Ignoruj błędy, jeśli mixer nie był zainicjowany
+
+    def play_audio(self, file: Path):
+        """Plays the selected audio file."""
         if not file.exists():
             return
+
+        # === ZMIANA: Zatrzymaj i zwolnij poprzedni plik ===
+        self.stop_audio()
+        # ===============================================
+
         try:
             pygame.mixer.music.load(str(file))
             pygame.mixer.music.play()
@@ -243,6 +260,21 @@ class AudioBrowserWindow(ctk.CTkToplevel):
             messagebox.showerror("Błąd odtwarzania", str(e), parent=self)
 
     def delete_audio(self, file: Path):
+        """Deletes an audio file from disk after confirmation."""
+
+        # === ZMIANA: Sprawdź czy plik nie jest odtwarzany ===
+        try:
+            if pygame.mixer.music.get_busy():
+                messagebox.showwarning("Plik w użyciu",
+                                       "Nie można usunąć pliku podczas odtwarzania.\nZatrzymaj odtwarzanie (odtwarzając inny plik lub zamykając okno) i spróbuj ponownie.",
+                                       parent=self)
+                return
+        except Exception:
+            pass  # Mixer nie działa, więc na pewno nie jest zajęty
+
+        self.stop_audio()  # Na wszelki wypadek zwolnij uchwyt
+        # ==================================================
+
         self.lift()
         self.focus_force()
         if os.path.exists(file) and messagebox.askyesno("Potwierdź", f"Usunąć plik?\n{file}", parent=self):
@@ -257,59 +289,92 @@ class AudioBrowserWindow(ctk.CTkToplevel):
     # =====================
 
     def check_queue(self):
-        """Sprawdza kolejkę w poszukiwaniu zadań do wykonania w głównym wątku GUI."""
+        """Periodically checks the queue for tasks to run on the main thread."""
         try:
             update_callable = self.queue.get_nowait()
         except queue.Empty:
             pass
         else:
-            update_callable()  # Wykonaj zadanie (np. aktualizację GUI)
+            update_callable()  # Run the GUI update
 
         self.after(100, self.check_queue)
 
     def set_status_busy(self, text: str):
-        """Ustawia etykietę statusu na dole prawego panelu."""
+        """Sets the status label to indicate a busy state."""
         self.status_label.configure(text=text)
 
     def set_status_ready(self):
-        """Czyści etykietę statusu."""
+        """Clears the status label."""
         self.status_label.configure(text="")
 
     # =====================
     # LOGIKA GENEROWANIA
     # =====================
-    if is_installed('torch'):
 
-        def _get_tts_model(self) -> Optional[XTTSPolishTTS]:
-            """Pobiera lub ładuje model TTS. Zgłasza błędy do GUI przez kolejkę."""
-            try:
-                if self.master.tts_model is None:
-                    voice_path = self.master.global_config.get('voice_path')
-                    if not voice_path or not Path(voice_path).exists():
-                        self.queue.put(lambda: messagebox.showwarning(
-                            "Brak pliku głosu",
-                            "Ścieżka do pliku głosu .wav nie jest ustawiona w Ustawieniach lub plik nie istnieje.\nUżywam domyślnego głosu (jeśli istnieje).",
-                            parent=self
-                        ))
-                        # xtts.py obsłuży None i weźmie domyślny `michal.wav`
-                        self.master.tts_model = XTTSPolishTTS(voice_path=None)
-                    else:
-                        self.master.tts_model = XTTSPolishTTS(voice_path=voice_path)
-                return self.master.tts_model
-            except Exception as e:
-                self.queue.put(lambda: messagebox.showerror(
-                    "Błąd modelu TTS",
-                    f"Nie udało się załadować modelu XTTS:\n{e}\n\nUpewnij się, że masz pobrany model i że ścieżka do pliku głosu w Ustawieniach jest poprawna.",
-                    parent=self
-                ))
-                if self.progress_window:
-                    self.queue.put(lambda: self.progress_window.destroy())
-                return None
-
-    def _run_converter(self):
-        """Uruchamia proces konwersji audio z ustawieniami z projektu."""
+    # === ZMIANA: Nowa metoda ładowania modelu ===
+    def _load_tts_model(self):
+        """
+        Loads the active TTS model instance based on project settings.
+        Sets self.master.tts_model to the loaded instance or None on failure.
+        """
         try:
-            base_speed = float(self.master.project_config.get('base_audio_speed', 1.1))
+            # Wyczyść stary model, jeśli istnieje
+            self.master.tts_model = None
+
+            if self.active_model == 'XTTS':
+                if not self.master.torch_installed:
+                    raise RuntimeError("Pakiet 'torch' nie jest zainstalowany.")
+
+                voice_path = self.global_config.get('xtts_voice_path')
+                if not voice_path or not Path(voice_path).exists():
+                    self.queue.put(lambda: messagebox.showwarning(
+                        "Brak pliku głosu XTTS",
+                        "Ścieżka do pliku głosu .wav nie jest ustawiona w Ustawieniach lub plik nie istnieje.\nUżywam domyślnego głosu (jeśli istnieje).",
+                        parent=self
+                    ))
+                    voice_path = None  # XTTS obsłuży None
+
+                self.master.tts_model = XTTSPolishTTS(voice_path=voice_path)
+
+            elif self.active_model == 'ElevenLabs':
+                api_key = self.global_config.get('elevenlabs_api_key')
+                voice_id = self.global_config.get('elevenlabs_voice_id')
+                if not api_key or not voice_id:
+                    raise ValueError("Klucz API lub Voice ID dla ElevenLabs nie są ustawione w Ustawieniach.")
+                self.master.tts_model = ElevenLabsTTS(api_key=api_key, voice_id=voice_id)
+
+            elif self.active_model == 'Google Cloud TTS':
+                creds_path = self.global_config.get('google_credentials_path')
+                voice_name = self.global_config.get('google_voice_name')
+                if not creds_path or not Path(creds_path).exists():
+                    raise ValueError("Ścieżka do credentials .json dla Google TTS jest nieprawidłowa lub nie istnieje.")
+                self.master.tts_model = GoogleCloudTTS(credentials_path=creds_path, voice_name=voice_name)
+
+            else:
+                raise ValueError(f"Nieznany model TTS: {self.active_model}")
+
+        except Exception as e:
+            self.master.tts_model = None
+            self.queue.put(lambda: messagebox.showerror(
+                f"Błąd modelu {self.active_model}",
+                f"Nie udało się załadować modelu:\n{e}",
+                parent=self
+            ))
+            if self.progress_window:
+                self.queue.put(lambda: self.progress_window.destroy())
+
+    # ===========================================
+
+    def _run_converter(self, is_single_file=False, single_file_path: Optional[Path] = None):
+        """
+        Initializes and runs the AudioConverter.
+
+        Args:
+            is_single_file: If True, convert only the file at `single_file_path`.
+            single_file_path: Path to the single .wav file to convert.
+        """
+        try:
+            base_speed = float(self.project_config.get('base_audio_speed', 1.1))
         except ValueError:
             base_speed = 1.1
             self.queue.put(lambda: messagebox.showwarning(
@@ -318,65 +383,55 @@ class AudioBrowserWindow(ctk.CTkToplevel):
                 parent=self
             ))
 
-        converter = AudioConverter(base_speed=base_speed)
+        # Pobierz ustawienia filtrów z global_config
+        filter_settings = self.global_config.get('ffmpeg_filters', {})
+
+        converter = AudioConverter(
+            base_speed=base_speed,
+            filter_settings=filter_settings
+        )
 
         output_dir = self.audio_dir / "ready"
-        converter.convert_dir(str(self.audio_dir), str(output_dir))
+        os.makedirs(output_dir, exist_ok=True)
 
-    def run_converter_single(self, audio_file: Path):
-        """Uruchamia proces konwersji audio z ustawieniami z projektu."""
-        try:
-            base_speed = float(self.master.project_config.get('base_audio_speed', 1.0))
-        except ValueError:
-            base_speed = 1.0
-            self.queue.put(lambda: messagebox.showwarning(
-                "Błędna wartość",
-                f"Nieprawidłowa wartość 'base_audio_speed' w projekcie. Używam domyślnej: {base_speed}",
-                parent=self
-            ))
-
-        converter = AudioConverter(base_speed=base_speed)
-
-        output_dir = self.audio_dir / "ready"
-
-        if not output_dir.exists():
-            output_dir.mkdir(parents=True)
-
-        output_file = converter.build_output_file_path(os.path.basename(str(audio_file)), str(output_dir))
-
-        converter.parse_ogg(str(audio_file), output_file)
+        if is_single_file and single_file_path:
+            output_file = converter.build_output_file_path(single_file_path.name, str(output_dir))
+            converter.parse_ogg(str(single_file_path), output_file)
+        else:
+            converter.convert_dir(str(self.audio_dir), str(output_dir))
 
     # --- Generowanie pojedynczego pliku ---
 
     def start_generate_single(self, identifier: str):
-        """Rozpoczyna generowanie pojedynczego pliku w osobnym wątku."""
+        """Starts the generation of a single audio file in a new thread."""
         if not self.master.generation_lock.acquire(blocking=False):
             messagebox.showwarning("Zajęty", "Inny proces generowania jest już w toku.", parent=self)
             return
 
-        self.cancel_event.clear()  # Wyczyść flagę anulowania
+        self.cancel_event.clear()
         threading.Thread(target=self._task_generate_single, args=(identifier,), daemon=True).start()
 
     def _task_generate_single(self, identifier: str):
-        """Zadanie wykonywane w wątku do generowania pojedynczego pliku."""
+        """Worker thread task for generating a single file."""
         try:
             # 1. Załaduj model
-            self.queue.put(lambda: self.set_status_busy("Ładowanie modelu TTS..."))
-            tts_model = self._get_tts_model()
-            if tts_model is None: return
-            if self.cancel_event.is_set(): return  # Anulowano podczas ładowania modelu
+            self.queue.put(lambda: self.set_status_busy(f"Ładowanie modelu {self.active_model}..."))
+            self._load_tts_model()
+            if self.master.tts_model is None: return  # Błąd zgłoszony w _load_tts_model
+            if self.cancel_event.is_set(): return
 
             # 2. Generuj TTS
             self.queue.put(lambda: self.set_status_busy(f"Generowanie głosu dla dialogu {identifier}..."))
             text = self.dialogs[int(identifier) - 1]
-            output_path = self.audio_dir / f"output1 ({identifier}).wav"
-            tts_model.tts(text, str(output_path))
 
-            # (Sprawdzenie anulowania nie jest tu krytyczne, bo to pojedynczy plik)
+            # === ZMIANA: Wyjście .wav dla wszystkich modeli ===
+            output_path = self.audio_dir / f"output1 ({identifier}).wav"
+            self.master.tts_model.tts(text, str(output_path))
+            # ================================================
 
             # 3. Konwertuj audio
             self.queue.put(lambda: self.set_status_busy("Konwertowanie audio..."))
-            self.run_converter_single(output_path)
+            self._run_converter(is_single_file=True, single_file_path=output_path)
 
             # 4. Odśwież GUI
             if self.current_identifier == identifier:
@@ -387,31 +442,31 @@ class AudioBrowserWindow(ctk.CTkToplevel):
             self.queue.put(lambda: messagebox.showerror("Błąd generowania", f"Wystąpił błąd: {e}", parent=self))
             self.queue.put(self.set_status_ready)
         finally:
-            # (Nie pokazujemy "anulowano" dla pojedynczego pliku, bo nie ma przycisku)
             self.master.generation_lock.release()
 
     # --- Generowanie wszystkich plików ---
 
     def start_generate_all(self):
-        """Rozpoczyna generowanie wszystkich brakujących plików."""
+        """Starts the generation of all missing audio files in a new thread."""
         if not self.master.generation_lock.acquire(blocking=False):
             messagebox.showwarning("Zajęty", "Inny proces generowania jest już w toku.", parent=self)
             return
 
-        self.cancel_event.clear()  # Wyczyść flagę anulowania
+        self.cancel_event.clear()
         self.progress_window = GenerationProgressWindow(self, self.cancel_event)
         threading.Thread(target=self._task_generate_all, daemon=True).start()
 
     def _task_generate_all(self):
-        """Zadanie wykonywane w wątku do generowania wszystkich plików."""
+        """Worker thread task for generating all missing files."""
         generated_count = 0
         try:
             # 1. Załaduj model
             self.queue.put(
-                lambda: self.progress_window.update_progress(0, len(self.dialogs), "Ładowanie modelu TTS..."))
-            tts_model = self._get_tts_model()
-            if tts_model is None: return
-            if self.cancel_event.is_set(): return  # Anulowano podczas ładowania modelu
+                lambda: self.progress_window.update_progress(0, len(self.dialogs),
+                                                             f"Ładowanie modelu {self.active_model}..."))
+            self._load_tts_model()
+            if self.master.tts_model is None: return
+            if self.cancel_event.is_set(): return
 
             # 2. Znajdź brakujące pliki
             dialogs_to_generate = []
@@ -437,7 +492,7 @@ class AudioBrowserWindow(ctk.CTkToplevel):
                                                                                                    "Generowanie TTS..."))
 
                 output_path = self.audio_dir / f"output1 ({identifier}).wav"
-                tts_model.tts(text, str(output_path))
+                self.master.tts_model.tts(text, str(output_path))
 
             # 4. Konwertuj audio (wszystkie na raz)
             if self.cancel_event.is_set():
@@ -448,7 +503,7 @@ class AudioBrowserWindow(ctk.CTkToplevel):
                     lambda: self.progress_window.set_indeterminate(
                         "Konwertowanie audio...\n(To może potrwać kilka minut)"))
 
-            self._run_converter()  # Uruchom konwersję na tym, co się wygenerowało
+            self._run_converter(is_single_file=False)
 
             # 5. Zakończ
             self.queue.put(lambda: self.progress_window.destroy())
@@ -476,20 +531,19 @@ class AudioBrowserWindow(ctk.CTkToplevel):
     # KONFIGURACJA
     # =====================
     def choose_audio_dir(self):
-        """Zawsze pokazuje dialog nad głównym oknem."""
+        """Opens a dialog to choose the audio output directory."""
         self.lift()
         self.focus_force()
-        # === ZMIANA: Użyj katalogu startowego z ustawień ===
         initial_dir = self.master.global_config.get('start_directory')
         path = filedialog.askdirectory(title="Wybierz katalog audio", initialdir=initial_dir, parent=self)
-        # ===================================================
         if path:
             self.audio_dir = Path(path)
-            self.save_project()  # Zapisz ścieżkę w projekcie
+            self.save_project()
             if self.current_identifier:
                 self.load_audio_files(self.current_identifier)
 
     def save_project(self):
+        """Saves the selected audio directory path to the project config."""
         if self.audio_dir:
             abs_dir = str(self.audio_dir.absolute())
             self.project_config["audio_path"] = abs_dir

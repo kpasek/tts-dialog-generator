@@ -59,9 +59,13 @@ BUILTIN_REPLACE = [
 
 
 class SubtitleStudioApp(ctk.CTk):
+    """
+    Main application class for Subtitle Studio.
+    Handles the main window, UI components, file operations, and project management.
+    """
+
     def __init__(self):
         super().__init__()
-        # Obsługa zamknięcia okna
         self.protocol("WM_DELETE_WINDOW", self.on_close)
         self.has_unsaved_changes = False
 
@@ -77,8 +81,13 @@ class SubtitleStudioApp(ctk.CTk):
 
         self.builtin_remove = [PatternItem(p.pattern, p.replace, p.ignore_case, name) for p, name in BUILTIN_REMOVE]
         self.builtin_replace = [PatternItem(p.pattern, p.replace, p.ignore_case, name) for p, name in BUILTIN_REPLACE]
-        self.builtin_remove_state = [tk.BooleanVar(value=True) for _ in self.builtin_remove]
-        self.builtin_replace_state = [tk.BooleanVar(value=True) for _ in self.builtin_replace]
+        self.builtin_remove_state = [tk.BooleanVar(value=True, name=f"br_{i}") for i, _ in
+                                     enumerate(self.builtin_remove)]
+        self.builtin_replace_state = [tk.BooleanVar(value=True, name=f"bp_{i}") for i, _ in
+                                      enumerate(self.builtin_replace)]
+
+        for var in self.builtin_remove_state + self.builtin_replace_state:
+            var.trace_add("write", self.mark_as_unsaved)
 
         self.custom_remove: List[PatternItem] = []
         self.custom_replace: List[PatternItem] = []
@@ -89,37 +98,42 @@ class SubtitleStudioApp(ctk.CTk):
         self.processed_replace: List[str] = []
 
         self.project_config = {}
-        # Przechowuje całą globalną konfigurację (z .subtitle_studio_config.json)
         self.global_config = {}
 
-        if is_installed('torch'):
+        # === ZMIANA: Sprawdzenie instalacji Torcha ===
+        self.torch_installed = is_installed('torch')
+        if not self.torch_installed:
+            print("Ostrzeżenie: Pakiet 'torch' nie jest zainstalowany. Model XTTS będzie niedostępny.")
+        # ===========================================
 
-            # Przechowuje załadowany model TTS, aby nie ładować go wielokrotnie
-            self.tts_model: Optional[XTTSPolishTTS] = None
-        # Blokada uniemożliwiająca jednoczesne generowanie (np. pojedynczego pliku i wszystkich)
+        # Model TTS (dla XTTS) jest ładowany tylko raz
+        self.tts_model = None
         self.generation_lock = threading.Lock()
-
         self.cancel_generation_event = threading.Event()
 
         self._create_menu()
         self._create_widgets()
         self._load_app_config()
 
+    def mark_as_unsaved(self, *args):
+        """Flags the current project as having unsaved changes."""
+        self.has_unsaved_changes = True
+        if "Gotowy" in self.status.cget("text"):
+            self.set_status("Gotowy (niezapisane zmiany)")
+
     def _create_menu(self):
+        """Creates the main application menu bar."""
         menubar = tk.Menu(self)
         config_menu = tk.Menu(menubar, tearoff=0)
         config_menu.add_command(label="Otwórz projekt", command=self.open_project)
         config_menu.add_command(label="Zapisz projekt", command=self.save_project)
         config_menu.add_command(label="Zapisz jako...", command=self.save_project_as)
-
         config_menu.add_separator()
         config_menu.add_command(label="Zamknij projekt", command=self.close_project)
-
         config_menu.add_separator()
         config_menu.add_command(label="Ustawienia", command=self.open_settings_window)
-
         config_menu.add_separator()
-        config_menu.add_command(label="Zamknij", command=self.quit)
+        config_menu.add_command(label="Zamknij", command=self.on_close)  # Zmienione na on_close
         menubar.add_cascade(label="Projekt", menu=config_menu)
 
         gen_menu = tk.Menu(menubar, tearoff=0)
@@ -131,6 +145,7 @@ class SubtitleStudioApp(ctk.CTk):
         self.config(menu=menubar)
 
     def _create_widgets(self):
+        """Creates and places all main UI widgets in the window."""
         root_grid = ctk.CTkFrame(self)
         root_grid.pack(fill="both", expand=True, padx=10, pady=10)
         root_grid.grid_rowconfigure(0, weight=1)
@@ -163,12 +178,9 @@ class SubtitleStudioApp(ctk.CTk):
         self.center_frame.grid_rowconfigure(4, weight=1)
 
         ctk.CTkLabel(self.center_frame, text="Własne wzorce wycinające").grid(row=0, column=0, sticky="w", padx=6)
-
-        # przewijana lista custom patterns do usuwania
         self.custom_remove_frame = ctk.CTkScrollableFrame(self.center_frame)
         self.custom_remove_frame.grid(row=1, column=0, sticky="nsew", padx=6, pady=(2, 6))
 
-        # input
         clean_inline_frame = self.build_clean_list_frame(2)
         self.ent_remove_pattern = ctk.CTkEntry(clean_inline_frame, placeholder_text="regexp")
         self.ent_remove_pattern.pack(side="left", fill="x", expand=True, padx=(4, 2))
@@ -178,18 +190,14 @@ class SubtitleStudioApp(ctk.CTk):
         checkbox = ctk.CTkCheckBox(clean_inline_frame, text="Aa", variable=self.var_remove_ignore)
         checkbox.pack(side="left", padx=(2, 4))
         CreateToolTip(checkbox, 'Uwzględnij wielkość znaków')
-
         ctk.CTkButton(clean_inline_frame, text="Dodaj", command=self.add_inline_remove).pack(side="left", padx=2)
 
         replace_top_frame = ctk.CTkFrame(self.center_frame)
         replace_top_frame.grid(row=3, column=0, sticky="ew", pady=(4, 4))
-
         lab = ctk.CTkLabel(replace_top_frame, text="Własne wzorce podmieniające")
         lab.pack(side="left", anchor="w", fill="x", expand=False, padx=6)
-
         ctk.CTkButton(replace_top_frame, text="Importuj", command=self.import_patterns_from_csv).pack(side="right")
 
-        # przewijana lista custom patterns do zamiany
         self.custom_replace_frame = ctk.CTkScrollableFrame(self.center_frame)
         self.custom_replace_frame.grid(row=4, column=0, sticky="nsew", padx=6, pady=(2, 6))
 
@@ -241,16 +249,19 @@ class SubtitleStudioApp(ctk.CTk):
         self.status.pack(fill="x", side="bottom")
 
     def build_clean_list_frame(self, row_nr) -> CTkFrame:
+        """Helper to create a standard input frame for patterns."""
         clean_inline_frame = ctk.CTkFrame(self.center_frame)
         clean_inline_frame.grid(row=row_nr, column=0, sticky="ew", pady=(4, 4))
         return clean_inline_frame
 
     def build_scroll_list_frame(self, row_nr) -> CTkScrollableFrame:
+        """Helper to create a standard scrollable frame."""
         scroll_frame = ctk.CTkScrollableFrame(self.center_frame)
         scroll_frame.grid(row=row_nr, column=0, sticky="ew", pady=(4, 4))
         return scroll_frame
 
     def _create_builtin_list(self, parent, patterns, states, row_nr):
+        """Populates a scrollable frame with built-in pattern checkboxes."""
         sc = ctk.CTkScrollableFrame(parent)
         sc.grid(sticky="nsew", padx=6, pady=(0, 6), row=row_nr)
         for i, p in enumerate(patterns):
@@ -259,61 +270,67 @@ class SubtitleStudioApp(ctk.CTk):
             cb.pack(anchor="w", pady=2)
 
     def add_inline_remove(self):
+        """Adds a new custom 'remove' pattern from the input fields."""
         pattern = self.ent_remove_pattern.get()
         replace = self.ent_remove_replace.get()
         case_sensitive = self.var_remove_ignore.get()
         if not pattern:
             return
 
-        # BUGFIX: Create item, add to list, then pass item and list to add_row
         new_pattern = PatternItem(pattern, replace, not case_sensitive)
         self.custom_remove.append(new_pattern)
         self.add_row(self.custom_remove_frame, new_pattern, self.custom_remove)
+        self.mark_as_unsaved()
 
         self.ent_remove_pattern.delete(0, "end")
         self.ent_remove_replace.delete(0, "end")
 
     def add_inline_replace(self):
+        """Adds a new custom 'replace' pattern from the input fields."""
         pattern = self.ent_replace_pattern.get()
         replace = self.ent_replace_replace.get()
         case_sensitive = self.var_replace_ignore.get()
         if not pattern:
             return
 
-        # BUGFIX: Create item, add to list, then pass item and list to add_row
         new_pattern = PatternItem(pattern, replace, not case_sensitive)
         self.custom_replace.append(new_pattern)
         self.add_row(self.custom_replace_frame, new_pattern, self.custom_replace)
+        self.mark_as_unsaved()
 
         self.ent_replace_pattern.delete(0, "end")
         self.ent_replace_replace.delete(0, "end")
 
     def add_row(self, frame, pattern_item: PatternItem, target_list: List[PatternItem]):
         """
-        BUGFIX: Ta metoda przyjmuje teraz PatternItem i listę, do której on należy,
-        aby przycisk 'X' mógł usunąć obiekt z listy danych, a nie tylko z GUI.
+        Adds a new row representing a pattern to a given frame.
+
+        Args:
+            frame: The parent CTkScrollableFrame.
+            pattern_item: The PatternItem data object.
+            target_list: The list (self.custom_remove or self.custom_replace) to remove the item from.
         """
         row = ctk.CTkFrame(frame)
         row.pack(fill="x", pady=2, padx=2)
 
-        lbl = ctk.CTkLabel(row,
-                           text=f"[{pattern_item.pattern}] -> [{pattern_item.replace}] {'' if pattern_item.ignore_case else '(Aa)'}")
+        lbl_text = f"[{pattern_item.pattern}] -> [{pattern_item.replace}] {'' if pattern_item.ignore_case else '(Aa)'}"
+        lbl = ctk.CTkLabel(row, text=lbl_text)
         lbl.pack(side="left", fill="x", expand=False, padx=4)
 
         def on_delete():
             try:
-                target_list.remove(pattern_item)  # Usuń z listy danych
+                target_list.remove(pattern_item)
             except ValueError:
-                # Może się zdarzyć, jeśli lista została zmodyfikowana gdzie indziej
                 print(f"Ostrzeżenie: Nie znaleziono {pattern_item} na liście {target_list}")
                 pass
-            row.destroy()  # Usuń z GUI
+            row.destroy()
+            self.mark_as_unsaved()  # Mark as unsaved on delete
 
         btnX = ctk.CTkButton(row, text="X", width=60, command=on_delete)
         btnX.pack(side="right", padx=4)
-        self.has_unsaved_changes
 
     def load_file(self, path: Optional[str] = None):
+        """Loads a subtitle .txt file into the application."""
         if not path:
             initial_dir = self.global_config.get('start_directory')
             if not initial_dir and os.path.exists("subtitles"):
@@ -323,6 +340,12 @@ class SubtitleStudioApp(ctk.CTk):
                                               initialdir=initial_dir)
         if not path:
             return
+
+        # === ZMIANA: Sprawdź niezapisane zmiany ===
+        if not self._check_unsaved_changes():
+            return  # Anulowano
+        # ========================================
+
         self.loaded_path = Path(path)
         self.lbl_filename.configure(text=str(self.loaded_path.name))
         try:
@@ -334,7 +357,12 @@ class SubtitleStudioApp(ctk.CTk):
             messagebox.showerror("Błąd", f"Nie udało się wczytać pliku:\n{e}")
 
     def open_project(self, path: str | None = None):
+        """Opens a .json project file and loads its settings."""
         if path is None:
+            # === ZMIANA: Sprawdź niezapisane zmiany ===
+            if not self._check_unsaved_changes():
+                return  # Anulowano
+            # ========================================
             initial_dir = self.global_config.get('start_directory')
             path = filedialog.askopenfilename(title="Otwórz projekt",
                                               filetypes=[("JSON", "*.json"), ("All", "*")],
@@ -362,28 +390,31 @@ class SubtitleStudioApp(ctk.CTk):
             self.set_status("Wczytano projekt")
             self.save_app_setting('last_project', path)
             self.project_config = cfg
+            self.has_unsaved_changes = False  # Świeżo załadowany projekt jest "zapisany"
         except Exception as e:
             messagebox.showerror("Błąd", f"Nie udało się wczytać konfiguracji:\n{e}")
 
     def close_project(self):
-        """Usuwa ścieżkę do ostatniego projektu i ponownie uruchamia aplikację."""
+        """Closes the current project and restarts the application to a clean state."""
+        # === ZMIANA: Sprawdź niezapisane zmiany ===
+        if not self._check_unsaved_changes():
+            return  # Anulowano
+        # ========================================
         try:
-            # 1. Zapisz konfigurację globalną bez 'last_project'
             self.save_app_setting('last_project', None)
-
-            # 2. Zrestartuj aplikację
-            # os.execl zastępuje bieżący proces nowym
             os.execl(sys.executable, sys.executable, *sys.argv)
         except Exception as e:
             messagebox.showerror("Błąd restartu",
                                  f"Nie udało się zrestartować aplikacji:\n{e}\n\nProszę zamknąć i otworzyć program ręcznie.")
 
     def set_project_config(self, param, value):
+        """Saves a single key-value pair to the current project configuration."""
         cfg = self._gather_project_config()
         cfg[param] = value
-        self.save_project(cfg)
+        self.save_project(cfg)  # save_project ustawia has_unsaved_changes na False
 
     def save_project(self, cfg: dict | None = None):
+        """Saves the current configuration to the loaded project file."""
         if not self.current_project_path:
             return self.save_project_as()
         cfg = self._gather_project_config() if cfg is None else cfg
@@ -391,22 +422,26 @@ class SubtitleStudioApp(ctk.CTk):
         try:
             with open(self.current_project_path, "w", encoding="utf-8") as f:
                 json.dump(cfg, f, indent=2, ensure_ascii=False)
-            self.set_status("Zapisano projekt")
+            self.set_status(f"Zapisano projekt: {self.current_project_path.name}")
             self.has_unsaved_changes = False
         except Exception as e:
             messagebox.showerror("Błąd", f"Nie udało się zapisać konfiguracji:\n{e}")
 
     def save_project_as(self):
-        path = filedialog.asksaveasfilename(defaultextension=".json", filetypes=[("JSON", "*.json")])
+        """Saves the current configuration to a new .json project file."""
+        path = filedialog.asksaveasfilename(
+            defaultextension=".json",
+            filetypes=[("JSON", "*.json")],
+            initialdir=self.global_config.get('start_directory')
+        )
         if not path:
             return
         self.current_project_path = Path(path)
         self.save_project()
 
     def _gather_project_config(self) -> dict:
-        # Upewnij się, że zachowujemy ustawienia, których GUI nie zna
+        """Collects all current project settings into a dictionary."""
         current_cfg = self.project_config.copy()
-
         current_cfg.update({
             "builtin_remove_state": [bool(v.get()) for v in self.builtin_remove_state],
             "builtin_replace_state": [bool(v.get()) for v in self.builtin_replace_state],
@@ -414,22 +449,24 @@ class SubtitleStudioApp(ctk.CTk):
             "custom_replace": [p.to_json() for p in self.custom_replace],
             "subtitle_path": str(self.loaded_path) if self.loaded_path else None,
             "audio_path": self.project_config.get('audio_path'),
-            # base_audio_speed jest zapisywane przez set_project_config
+            "active_tts_model": self.project_config.get('active_tts_model', 'XTTS' if self.torch_installed else None),
+            "base_audio_speed": self.project_config.get('base_audio_speed', 1.1)
         })
         return current_cfg
 
     def _load_app_config(self):
+        """Loads the global application configuration from .subtitle_studio_config.json."""
         if APP_CONFIG.exists():
             try:
                 with open(APP_CONFIG, "r", encoding="utf-8") as f:
                     self.global_config = json.load(f)
                 if self.global_config.get('last_project'):
                     self.open_project(self.global_config.get('last_project'))
-
             except Exception:
-                pass  # Ignoruj błędy, załaduj domyślne
+                pass  # Ignore errors, load defaults
 
-    def filter_preview(self, lines):
+    def filter_preview(self, lines: List[str]) -> List[str]:
+        """Filters the preview text box based on the search entry."""
         if not self.search_entry.get():
             return lines
         filtered = []
@@ -439,6 +476,7 @@ class SubtitleStudioApp(ctk.CTk):
         return filtered
 
     def _refresh_custom_lists(self):
+        """Destroys and recreates the custom pattern lists in the UI."""
         if hasattr(self, 'custom_remove_frame'):
             self.custom_remove_frame.destroy()
         if hasattr(self, 'custom_replace_frame'):
@@ -447,14 +485,15 @@ class SubtitleStudioApp(ctk.CTk):
         self.custom_remove_frame = self.build_scroll_list_frame(1)
         self.custom_remove_frame.grid(row=1, column=0, sticky="nsew", padx=6, pady=(2, 6))
         for p in self.custom_remove:
-            self.add_row(self.custom_remove_frame, p, self.custom_remove)  # BUGFIX: Przekaż PatterItem i listę
+            self.add_row(self.custom_remove_frame, p, self.custom_remove)
 
-        self.custom_replace_frame = self.build_scroll_list_frame(4)  # Zmieniony row_nr na 4
+        self.custom_replace_frame = self.build_scroll_list_frame(4)
         self.custom_replace_frame.grid(row=4, column=0, sticky="nsew", padx=6, pady=(2, 6))
         for p in self.custom_replace:
             self.add_row(self.custom_replace_frame, p, self.custom_replace)
 
-    def _gather_active_patterns(self):
+    def _gather_active_patterns(self) -> tuple[List[PatternItem], List[PatternItem]]:
+        """Collects all active built-in and custom patterns."""
         remove_patterns = []
         remove_patterns.extend(self.custom_remove)
         for i, p in enumerate(self.builtin_remove):
@@ -470,31 +509,21 @@ class SubtitleStudioApp(ctk.CTk):
         return remove_patterns, replace_patterns
 
     def apply_processing(self):
-        """Apply active patterns to loaded file and store results."""
+        """Applies all active patterns to the loaded subtitles."""
         if not self.original_lines:
             messagebox.showwarning('Brak pliku', 'Najpierw wczytaj plik z napisami.')
             return
 
         self.apply_patterns()
 
-        # show download buttons (place them if not already packed)
-        try:
-            # pack if not visible yet
-            if not getattr(self.btn_download_clean, '_packed', False):
-                self.btn_download_clean.pack(fill='x', padx=6, pady=(6, 3))
-                self.btn_download_clean._packed = True
-            if not getattr(self.btn_download_replace, '_packed', False):
-                self.btn_download_replace.pack(fill='x', padx=6, pady=(0, 6))
-                self.btn_download_replace._packed = True
-        except Exception:
-            # fallback: pack anyway
-            self.btn_download_clean.pack(fill='x', padx=6, pady=(6, 3))
-            self.btn_download_replace.pack(fill='x', padx=6, pady=(0, 6))
+        # Pokazanie przycisków pobierania
+        self.btn_download_clean.pack(fill='x', padx=6, pady=(6, 3))
+        self.btn_download_replace.pack(fill='x', padx=6, pady=(0, 6))
 
         self.set_status('Przetworzono napisy — gotowe do pobrania')
 
     def download_clean(self):
-        """Zapis oczyszczonych linii (po remove patterns)."""
+        """Saves the 'clean' (for Game Reader) subtitles to a file."""
         if not getattr(self, 'processed_clean', None):
             messagebox.showwarning('Brak danych', 'Brak oczyszczonych linii. Najpierw przetwórz plik.')
             return
@@ -511,7 +540,7 @@ class SubtitleStudioApp(ctk.CTk):
             messagebox.showerror('Błąd zapisu', str(e))
 
     def download_replace(self):
-        """Zapis linii po zamianach (po remove + replace patterns)."""
+        """Saves the 'replaced' (for TTS) subtitles to a file."""
         if not getattr(self, 'processed_replace', None):
             messagebox.showwarning('Brak danych', 'Brak zamienionych linii. Najpierw przetwórz plik.')
             return
@@ -528,10 +557,10 @@ class SubtitleStudioApp(ctk.CTk):
             messagebox.showerror('Błąd zapisu', str(e))
 
     def apply_patterns(self):
+        """Internal method to re-calculate processed lines and update the preview."""
         self.lbl_count_orig.configure(text=f'Linie oryginalne: {len(self.original_lines)}')
         rem_patterns, rep_patterns = self._gather_active_patterns()
 
-        # attempt compilation and application (catch bad regexes)
         try:
             self.processed_clean = apply_remove_patterns(self.original_lines, rem_patterns)
             self.processed_replace = apply_replace_patterns(self.processed_clean, rep_patterns)
@@ -543,7 +572,7 @@ class SubtitleStudioApp(ctk.CTk):
         self.set_preview(self.processed_replace)
 
     def set_preview(self, cleaned: list[str]):
-        # --- Numeracja linii ---
+        """Updates the read-only preview text box with numbered lines."""
         total_lines = len(cleaned)
         num_digits = len(str(total_lines)) if total_lines > 0 else 1
         numbered_lines = [
@@ -553,26 +582,54 @@ class SubtitleStudioApp(ctk.CTk):
 
         filtered = self.filter_preview(numbered_lines)
 
-        # --- Podgląd ---
         self.txt_preview.configure(state='normal')
         self.txt_preview.delete('0.0', tk.END)
         self.txt_preview.insert('0.0', '\n'.join(filtered))
         self.txt_preview.configure(state='disabled')
 
     def set_status(self, txt: str):
+        """Updates the bottom status bar label."""
         self.status.configure(text=txt)
 
     def audio_preview(self):
+        """Opens the Audio Browser window."""
         if not self.processed_replace:
             messagebox.showwarning("Brak danych", "Najpierw przetwórz dialogi, aby zobaczyć podgląd.")
             return
+
         project_cfg = self._gather_project_config()
-        win = AudioBrowserWindow(self, project_cfg, self.set_project_config, self.cancel_generation_event)
+
+        # === ZMIANA: Walidacja modelu TTS ===
+        active_model = project_cfg.get('active_tts_model')
+        if not active_model:
+            messagebox.showwarning("Brak modelu TTS",
+                                   "Nie wybrano aktywnego modelu TTS w Ustawieniach Projektu.",
+                                   parent=self)
+            return
+
+        if active_model == 'XTTS' and not self.torch_installed:
+            messagebox.showerror("Błąd XTTS",
+                                 "Model XTTS jest wybrany, ale pakiet 'torch' nie jest zainstalowany.\nZainstaluj 'torch' lub wybierz inny model w Ustawieniach.",
+                                 parent=self)
+            return
+        # ====================================
+
+        win = AudioBrowserWindow(
+            self,
+            project_cfg,
+            self.set_project_config,
+            self.cancel_generation_event,
+            self.global_config,  # Przekaż globalną konfigurację
+            active_model  # Przekaż nazwę aktywnego modelu
+        )
+        # === ZMIANA: Ustawienie modalności (grab_set) ===
+        win.grab_set()
         win.lift()
         win.focus_force()
+        # ==============================================
 
     def open_audio_deleter(self):
-        """Otwiera okno masowego usuwania plików audio."""
+        """Opens the Batch Audio Deleter window."""
         if not self.processed_replace:
             messagebox.showwarning("Brak danych", "Najpierw przetwórz dialogi (Zastosuj).", parent=self)
             return
@@ -585,10 +642,14 @@ class SubtitleStudioApp(ctk.CTk):
         deleter_win.grab_set()  # Okno modalne
 
     def open_settings_window(self):
-        win = SettingsWindow(self)
+        """Opens the Settings window."""
+        # === ZMIANA: Przekaż flagę instalacji torcha ===
+        win = SettingsWindow(self, self.torch_installed)
+        # =============================================
         win.grab_set()
 
     def import_patterns_from_csv(self):
+        """Imports 'replace' patterns from a 2-column CSV file."""
         initial_dir = self.global_config.get('start_directory')
         file_path = filedialog.askopenfilename(
             title="Wybierz plik CSV",
@@ -596,7 +657,7 @@ class SubtitleStudioApp(ctk.CTk):
             initialdir=initial_dir
         )
         if not file_path:
-            return  # Anulowano wybór
+            return
 
         try:
             count = 0
@@ -611,18 +672,18 @@ class SubtitleStudioApp(ctk.CTk):
                     replace = row[1] if len(row) > 1 else ""
                     case_sensitive = bool(int(row[2])) if len(row) > 2 and row[2].isdigit() else False
 
-                    # BUGFIX: Użyj poprawionej logiki dodawania
                     new_pattern = PatternItem(pattern, replace, not case_sensitive)
                     self.custom_replace.append(new_pattern)
                     self.add_row(self.custom_replace_frame, new_pattern, self.custom_replace)
                     count += 1
 
+            self.mark_as_unsaved()
             messagebox.showinfo("Import zakończony", f"Zaimportowano {count} wzorców.")
         except Exception as e:
             messagebox.showerror("Błąd importu", f"Nie udało się zaimportować pliku:\n{e}")
 
     def save_global_config(self, new_config_data: dict):
-        """Zapisuje dane do globalnego pliku konfiguracyjnego."""
+        """Saves data to the global .subtitle_studio_config.json file."""
         self.global_config.update(new_config_data)
         try:
             with open(APP_CONFIG.absolute(), "w", encoding="utf-8") as f:
@@ -631,13 +692,31 @@ class SubtitleStudioApp(ctk.CTk):
             messagebox.showerror("Błąd zapisu", f"Nie udało się zapisać globalnej konfiguracji: {e}")
 
     def save_app_setting(self, param, value):
-        """Zapisuje pojedynczą wartość w globalnym pliku konfiguracyjnym."""
+        """Saves a single key-value pair to the global config file."""
         self.save_global_config({param: value})
 
+    def _check_unsaved_changes(self) -> bool:
+        """
+        Checks for unsaved changes and prompts the user to save if necessary.
+
+        Returns:
+            bool: False if the action was cancelled, True otherwise.
+        """
+        if self.has_unsaved_changes and self.current_project_path:
+            msg = "Masz niezapisane zmiany w projekcie. Czy chcesz je zapisać?"
+            result = messagebox.askyesnocancel("Niezapisane zmiany", msg, parent=self)
+
+            if result is True:  # Tak
+                self.save_project()
+            elif result is None:  # Anuluj
+                return False
+            # Jeśli Nie, kontynuuj bez zapisywania
+        return True
+
     def on_close(self):
-        if self.has_unsaved_changes:
-            self.save_project_as()
-        self.destroy()
+        """Handles the application window close event."""
+        if self._check_unsaved_changes():
+            self.destroy()
 
 
 if __name__ == '__main__':
