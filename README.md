@@ -1,9 +1,17 @@
-# 🎙️ Generator dialogów z wykorzystaniem modelu Stylish-TTS-PL
+# 🎬 Subtitle Studio
 
-Repozytorium zawiera zestaw narzędzi do generowania głosów lektorskich w języku polskim z wykorzystaniem modelu **Stylish-TTS-PL** lub **XTTS_v2**.  
-Projekt został przygotowany z myślą o integracji z programem **Game Reader** [https://gamereader.tilda.ws/], służącym do automatycznego odczytywania dialogów w grach.
+**Subtitle Studio** to narzędzie desktopowe (Python + CustomTkinter) do czyszczenia, przetwarzania i zarządzania napisami dialogowymi w grach i projektach lektorskich.  
+Aplikacja została zaprojektowana z myślą o prostocie obsługi oraz integracji z narzędziami TTS / dubbingu.
 
 ---
+
+## ⚙️ Wymagania techniczne
+
+- **Python 3.10+**
+- Zależności (instalacja):  
+  ```bash
+  pip install -r requirements.txt
+
 
 ## 📦 Modele referencyjne
 
@@ -45,103 +53,113 @@ Do katalogu `generators/stylish_model/checkpoint_final` należy przekopiować ws
 
 ### 💡 Wskazówka:
 Jeśli podczas instalacji pojawią się błędy, możesz je skopiować i wkleić do czatu GPT – często potrafi pomóc w ich rozwiązaniu.
-## ▶️ Użycie
 
-Do generowania głosów służą skrypty:
-```shell
-python stylish_generator.py # w celu skorzystania z modelu STylish
-python xtts_generator.py # w celu skorzystania z modelu XTTS_v2
-```
+## 🚀 Funkcje główne
 
-Skrypt będzie wczytywał wszystkie pliki `.txt` z katalogu `./tts_ready` a następnie wygeneruje dialogi do katalogu `dialogs/[nazwa_pliku_txt]`
+### 🧹 1. Czyszczenie napisów
+- Usuń zbędne elementy z plików `.txt` (np. znaczniki `[NPC]`, `<html>`, `{TAGI}` itp.)
+- Używaj **wbudowanych filtrów** lub definiuj własne wyrażenia regularne.
+- Podgląd zmian w czasie rzeczywistym.
+- Eksportuj oczyszczone napisy jako:
+  - Napisy dla **Game Readera**,
+  - Napisy dla **TTS (Text-to-Speech)**.
 
-Dialogi zostaną wygenerowane do nowego katalogu w postaci surowych plików `.wav`.
-Po zakończeniu generacji należy uruchomić skrypt 
+---
 
-```shell
-python audio_converter.py
-``` 
+### 🔄 2. Własne wzorce
+- Dodawaj własne **reguły zamiany i usuwania tekstu**.
+- Możesz zaimportować wzorce z pliku `.csv`.
+- Każdy wzorzec obsługuje:
+  - wyrażenie regularne (`regex`),
+  - tekst zastępczy (`replace`),
+  - opcję rozróżniania wielkości liter (`Aa`).
 
-który rozpocznie proces przetwarzania audio — gotowe pliki dla programu Game Reader znajdziesz w podkatalogu:
+---
 
-`.dialogs/[nazwa]/ready/*`
+### 💬 3. Przeglądanie dialogów
+Po przetworzeniu napisów możesz:
+- Otworzyć **okno podglądu dialogów** (`Dialogi → Przeglądaj dialogi`),
+- W lewej kolumnie przeglądać listę wszystkich linii dialogowych (z wyszukiwaniem),
+- W prawej części widzieć przypisane pliki audio dla każdej linii.
 
-Skrypt sprawdza, które dialogi zostały już wygenerowane, i pomija istniejące pliki.
-Dzięki temu możesz szybko poprawiać wybrane kwestie, po prostu usuwając błędne pliki i ponownie uruchamiając generację.
+#### 💡 Możliwości:
+- Dwuklik na dialog → natychmiastowe odtworzenie pierwszego przypisanego pliku audio,  
+- Odtwarzanie plików `.wav` / `.ogg` z poziomu aplikacji,  
+- Wybór katalogu audio,  
+- Usuwanie pojedynczych lub wszystkich plików,  
+- Placeholder do generowania brakujących nagrań (np. z TTS).  
 
-## 🧹 Czyszczenie napisów i dialogów
+---
 
-W katalogu `cleaners/` znajdują się klasy ułatwiające czyszczenie dialogów z niepotrzebnych fragmentów, takich jak `(kaszel)` czy `(śmiech)`.
+### 🧩 4. System projektów
+- Wszystkie ustawienia możesz zapisać jako projekt `.json`.  
+- Projekt przechowuje:
+  - aktywne filtry i reguły,
+  - ścieżkę do pliku z napisami,
+  - katalog audio.  
+- Przy kolejnym uruchomieniu aplikacja automatycznie ładuje ostatni projekt.
 
-Dodatkowo, w pliku `cleaners/cleaner.py -> remove_voice_files_by_regex` znajduje się metoda do usuwania plików audio na podstawie wyrażenia regularnego, odpowiadającego treści dialogu.
+---
 
-### Przykład użycia:
-```python
-from cleaners.cleaner import Cleaner
+## 🖼️ Przykładowy workflow
 
-cleaner = Cleaner("dialogs_hogwart/hl_ready.txt")
+1. **Wczytaj plik napisów**
+   - Menu: `Projekt → Otwórz projekt` lub przycisk **Wczytaj**.
+2. **Zastosuj filtry i wzorce**
+   - Wybierz, które wzorce mają być aktywne.
+   - Kliknij **Zastosuj**.
+3. **Podgląd wyników**
+   - Po prawej stronie zobaczysz przetworzone dialogi.
+   - Możesz wyszukiwać po słowach kluczowych.
+4. **Zapisz efekt**
+   - `Pobierz - napisy dla Game Reader`  
+     → wersja “czysta”, gotowa do użycia w grze.
+   - `Pobierz - napisy dla TTS`  
+     → wersja z poprawkami dla syntezatora mowy.
+5. **Przeglądaj dialogi i pliki audio**
+   - Menu: `Dialogi → Przeglądaj dialogi`
+   - Sprawdź, które dialogi mają przypisane pliki `.wav / .ogg`.
 
-# Masowe usuwanie dialogów według zdefiniowanych wzorców
-for pattern, replacement in cleaner.patterns:
-    cleaner.remove_voice_files_by_regex(pattern, "dialogs/hogwart")
+---
 
-# Usuwa wszystkie dialogi zawierające imię "Harlow"
-cleaner.remove_voice_files_by_regex(r"Harlow", "dialogs_hl_tts")
-```
+## 🧠 Przykłady użycia
 
-## 🎧 Przetwarzanie audio (.wav → .ogg)
+### 🔸 Przykład 1: Czyszczenie znaczników z napisów
+**Wejście:**
 
-Do konwersji oraz przetwarzania dźwięku można użyć klasy AudioConverter.
+`[NPC] <em>Hecat</em>: Welcome to the city!`
 
-Proces obejmuje:
+**Reguły aktywne:**
+- Usuń zawartość w `[]`
+- Usuń zawartość w `<>`
 
-    usuwanie cichych fragmentów,
+**Wynik:**
 
-    normalizację głośności,
+`Hecat: Welcome to the city!`
 
-    przyspieszenie dialogów w zależności od ich długości.
+---
 
-Zasada przyspieszenia:
+### 🔸 Przykład 2: Zamiana znaków specjalnych
+**Wejście:**
 
-    audio do 3 sekund – bez zmian,
+`Hello?!?!`
 
-    powyżej 3 s – co 2 sekundy długości zwiększają szybkość o 3%,
+**Reguły aktywne:**
+- `?!` → `?`
+- `?{2,}` → `?`
 
-    maksymalne przyspieszenie: 20%,
+**Wynik:**
 
-    dodatkowo, wersja output2 jest przyspieszana o kolejne 10% względem output1.
+`Hello?`
 
-    Przyspieszanie audio wykonywane jest przez program ffmpeg i należy mieć go zainstalowany w systemie
-    Instalacja ubuntu:
-    sudo apt install ffmpeg
-    Instalacja Windows:
-    winget install Gyan.FFmpeg
-    
-Przykład użycia:
 
-```python
-from audio_converter import AudioConverter
+---
 
-converter = AudioConverter()
-# wszystkie pliki audio w katalogu dialogs/*
-converter.convert_audio()
-# lub
-converter.convert_dir("dialogs/fc3","dialogs/fc3/ready") # ręczne ustawienie katalogu wejściowego i wyjściowego
-```
+### 🔸 Przykład 3: Przegląd dialogów z plikami audio
 
-Wynikowe pliki .ogg zostaną zapisane w katalogu:
+| Dialog ID | Tekst dialogu              | Pliki audio                            |
+|------------|----------------------------|----------------------------------------|
+| 001        | Hello, traveler!          | `output1 (1).ogg`, `ready/output1 (1).ogg` |
+| 002        | Welcome to the guild.     | *(Brak plików — przycisk Generuj)*     |
 
-`ready/*.ogg`
-
-### 🗣️ Uwagi końcowe
-
-    Projekt jest wciąż rozwijany – celem jest pełna automatyzacja generowania lektora dla gier.
-
-    Przy długich sesjach generowania warto obserwować wykorzystanie GPU/CPU – model Stylish-TTS-PL potrafi być zasobożerny.
-
-    Jeśli chcesz dodać własne reguły czyszczenia lub modyfikacji dźwięku, wystarczy rozszerzyć odpowiednie klasy w katalogu cleaners/ lub audio_converter.py.
-
-### 📄 Licencja
-
-Projekt udostępniany jest na licencji MIT, o ile nie zaznaczono inaczej.
-Model Stylish-TTS-PL jest własnością autora z repozytorium Hugging Face i podlega jego warunkom licencyjnym.
+---
