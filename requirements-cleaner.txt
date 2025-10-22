@@ -3,3 +3,6 @@ nltk
 pillow
 pyinstaller
 pygame
+google-cloud-texttospeech
+elevenlabs
+pydub

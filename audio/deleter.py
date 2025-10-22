@@ -1,9 +1,10 @@
-from tkinter import  messagebox
+from tkinter import messagebox
 import customtkinter as ctk
 from pathlib import Path
 from typing import List
 import tkinter as tk
-import re, os
+import re
+import os
 
 from app.entity import PatternItem
 from app.tooltip import CreateToolTip
@@ -22,9 +23,11 @@ class AudioDeleterWindow(ctk.CTkToplevel):
         self.geometry("800x600")
 
         if not self.audio_dir or not self.audio_dir.is_dir():
-            messagebox.showerror("Błąd",
-                                 "Katalog audio nie jest ustawiony lub nie istnieje.\nUstaw go w przeglądarce dialogów.",
-                                 parent=self)
+            messagebox.showerror(
+                "Błąd",
+                "Katalog audio nie jest ustawiony lub nie istnieje.\nUstaw go w przeglądarce dialogów.",
+                parent=self
+            )
             self.after(100, self.destroy)
             return
 
@@ -51,10 +54,6 @@ class AudioDeleterWindow(ctk.CTkToplevel):
         self.ent_remove_pattern = ctk.CTkEntry(clean_inline_frame, placeholder_text="regexp")
         self.ent_remove_pattern.pack(side="left", fill="x", expand=True, padx=(4, 2))
 
-        # Pole "zamień na" jest nam niepotrzebne do logiki, ale zostawiamy dla spójności UI
-        self.ent_remove_replace = ctk.CTkEntry(clean_inline_frame, placeholder_text="zamień na (ignorowane)")
-        self.ent_remove_replace.pack(side="left", fill="x", expand=True, padx=(2, 2))
-
         self.var_remove_ignore = tk.BooleanVar(value=False)
         checkbox = ctk.CTkCheckBox(clean_inline_frame, text="Aa", variable=self.var_remove_ignore)
         checkbox.pack(side="left", padx=(2, 4))
@@ -80,17 +79,15 @@ class AudioDeleterWindow(ctk.CTkToplevel):
 
     def add_inline_remove(self):
         pattern = self.ent_remove_pattern.get()
-        replace = self.ent_remove_replace.get()  # Ignorowane, ale dla spójności
         case_sensitive = self.var_remove_ignore.get()
         if not pattern:
             return
 
-        new_pattern = PatternItem(pattern, replace, not case_sensitive)
+        new_pattern = PatternItem(pattern, "", not case_sensitive)
         self.custom_remove.append(new_pattern)
         self.add_row(self.custom_remove_frame, new_pattern, self.custom_remove)
 
         self.ent_remove_pattern.delete(0, "end")
-        self.ent_remove_replace.delete(0, "end")
         self.recalculate_stats()  # Przelicz po dodaniu
 
     def add_row(self, frame, pattern_item: PatternItem, target_list: List[PatternItem]):
@@ -189,4 +186,3 @@ class AudioDeleterWindow(ctk.CTkToplevel):
             messagebox.showinfo("Gotowe", f"Pomyślnie usunięto {deleted_count} plików.", parent=self)
 
         self.recalculate_stats()  # Odśwież statystyki (powinny być 0)
-

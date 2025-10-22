@@ -14,7 +14,6 @@ class AudioConverter:
         print(f"AudioConverter zainicjowany z bazową prędkością: {self.base_speed}")
         print(f"Ustawienia filtrów: {self.filter_settings}")
 
-
     def calculate_base_speed(self, duration_ms: float) -> float:
         """
         Zwraca współczynnik przyspieszenia w zależności od długości audio.
@@ -154,19 +153,22 @@ class AudioConverter:
 
                     input_path = os.path.join(audio_dir, filename)
 
-                    base_name_match = os.path.splitext(filename)[0]
-                    if base_name_match.startswith("output1 "):
-                        base_name = base_name_match[8:]
-                    else:
-                        base_name = base_name_match
+                    output_path_ogg = self.build_output_file_path(filename, output_dir)
 
-                    output_file_name = f"output1 {base_name}.ogg"
-                    output_path_ogg = os.path.join(output_dir, output_file_name)
-
-                    tasks_ogg.append(executor.submit(
-                        self.parse_ogg, input_path, output_path_ogg))
+                    tasks_ogg.append(executor.submit(self.parse_ogg, input_path, output_path_ogg))
 
             for task_ogg in tasks_ogg:
                 task_ogg.result()
 
         print(f"✅ Zakończono przetwarzanie wszystkich plików audio dla {audio_dir}")
+
+    def build_output_file_path(self, filename: str, output_dir: str) -> str:
+        base_name_match = os.path.splitext(filename)[0]
+        if base_name_match.startswith("output1 "):
+            base_name = base_name_match[8:]
+        else:
+            base_name = base_name_match
+
+        output_file_name = f"output1 {base_name}.ogg"
+        output_path_ogg = os.path.join(output_dir, output_file_name)
+        return output_path_ogg

@@ -1,7 +1,8 @@
 import customtkinter as ctk
 import tkinter as tk
 from tkinter import filedialog, messagebox
-import os, re
+import os
+import re
 from pathlib import Path
 import pygame
 from typing import Optional, TYPE_CHECKING
@@ -27,7 +28,7 @@ class AudioBrowserWindow(ctk.CTkToplevel):
     def __init__(self, master: 'SubtitleStudioApp', project_config: dict, save_project_config,
                  cancel_event: threading.Event):
         super().__init__(master)
-        self.master: 'SubtitleStudioApp' = master  # Przechowujemy referencję do głównej aplikacji
+        self.master: 'SubtitleStudioApp' = master
         self.save_project_config = save_project_config
         self.title("Przeglądaj i Generuj Dialogi")
         self.geometry(master.geometry())  # dziedziczy rozmiar
@@ -319,6 +320,29 @@ class AudioBrowserWindow(ctk.CTkToplevel):
         output_dir = self.audio_dir / "ready"
         converter.convert_dir(str(self.audio_dir), str(output_dir))
 
+    def run_converter_single(self, audio_file: Path):
+        """Uruchamia proces konwersji audio z ustawieniami z projektu."""
+        try:
+            base_speed = float(self.master.project_config.get('base_audio_speed', 1.0))
+        except ValueError:
+            base_speed = 1.0
+            self.queue.put(lambda: messagebox.showwarning(
+                "Błędna wartość",
+                f"Nieprawidłowa wartość 'base_audio_speed' w projekcie. Używam domyślnej: {base_speed}",
+                parent=self
+            ))
+
+        converter = AudioConverter(base_speed=base_speed)
+
+        output_dir = self.audio_dir / "ready"
+
+        if not output_dir.exists():
+            output_dir.mkdir(parents=True)
+
+        output_file = converter.build_output_file_path(os.path.basename(str(audio_file)), str(output_dir))
+
+        converter.parse_ogg(str(audio_file), output_file)
+
     # --- Generowanie pojedynczego pliku ---
 
     def start_generate_single(self, identifier: str):
@@ -349,7 +373,7 @@ class AudioBrowserWindow(ctk.CTkToplevel):
 
             # 3. Konwertuj audio
             self.queue.put(lambda: self.set_status_busy("Konwertowanie audio..."))
-            self._run_converter()
+            self.run_converter_single(output_path)
 
             # 4. Odśwież GUI
             if self.current_identifier == identifier:

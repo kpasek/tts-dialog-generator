@@ -5,7 +5,11 @@ import os.path
 import customtkinter as ctk
 import tkinter as tk
 from tkinter import filedialog, messagebox
-import re, csv, json, sys, os  # sys i os są potrzebne do close_project
+import re
+import csv
+import json
+import sys
+import os  # sys i os są potrzebne do close_project
 from typing import List, Optional
 from pathlib import Path
 
@@ -51,11 +55,13 @@ BUILTIN_REPLACE = [
 ]
 
 
-
-
 class SubtitleStudioApp(ctk.CTk):
     def __init__(self):
         super().__init__()
+        # Obsługa zamknięcia okna
+        self.protocol("WM_DELETE_WINDOW", self.on_close)
+        self.has_unsaved_changes = False
+
         self.title(APP_TITLE)
         self.geometry("1600x1000")
         try:
@@ -300,6 +306,7 @@ class SubtitleStudioApp(ctk.CTk):
 
         btnX = ctk.CTkButton(row, text="X", width=60, command=on_delete)
         btnX.pack(side="right", padx=4)
+        self.has_unsaved_changes
 
     def load_file(self, path: Optional[str] = None):
         if not path:
@@ -366,7 +373,6 @@ class SubtitleStudioApp(ctk.CTk):
             messagebox.showerror("Błąd restartu",
                                  f"Nie udało się zrestartować aplikacji:\n{e}\n\nProszę zamknąć i otworzyć program ręcznie.")
 
-
     def set_project_config(self, param, value):
         cfg = self._gather_project_config()
         cfg[param] = value
@@ -381,6 +387,7 @@ class SubtitleStudioApp(ctk.CTk):
             with open(self.current_project_path, "w", encoding="utf-8") as f:
                 json.dump(cfg, f, indent=2, ensure_ascii=False)
             self.set_status("Zapisano projekt")
+            self.has_unsaved_changes = False
         except Exception as e:
             messagebox.showerror("Błąd", f"Nie udało się zapisać konfiguracji:\n{e}")
 
@@ -427,13 +434,12 @@ class SubtitleStudioApp(ctk.CTk):
         return filtered
 
     def _refresh_custom_lists(self):
-        # Niszczy stare ramki i buduje nowe
         if hasattr(self, 'custom_remove_frame'):
             self.custom_remove_frame.destroy()
         if hasattr(self, 'custom_replace_frame'):
             self.custom_replace_frame.destroy()
 
-        self.custom_remove_frame = self.build_scroll_list_frame(1)  # Zmieniony row_nr na 1
+        self.custom_remove_frame = self.build_scroll_list_frame(1)
         self.custom_remove_frame.grid(row=1, column=0, sticky="nsew", padx=6, pady=(2, 6))
         for p in self.custom_remove:
             self.add_row(self.custom_remove_frame, p, self.custom_remove)  # BUGFIX: Przekaż PatterItem i listę
@@ -441,7 +447,7 @@ class SubtitleStudioApp(ctk.CTk):
         self.custom_replace_frame = self.build_scroll_list_frame(4)  # Zmieniony row_nr na 4
         self.custom_replace_frame.grid(row=4, column=0, sticky="nsew", padx=6, pady=(2, 6))
         for p in self.custom_replace:
-            self.add_row(self.custom_replace_frame, p, self.custom_replace)  # BUGFIX: Przekaż PatterItem i listę
+            self.add_row(self.custom_replace_frame, p, self.custom_replace)
 
     def _gather_active_patterns(self):
         remove_patterns = []
@@ -622,6 +628,11 @@ class SubtitleStudioApp(ctk.CTk):
     def save_app_setting(self, param, value):
         """Zapisuje pojedynczą wartość w globalnym pliku konfiguracyjnym."""
         self.save_global_config({param: value})
+
+    def on_close(self):
+        if self.has_unsaved_changes:
+            self.save_project_as()
+        self.destroy()
 
 
 if __name__ == '__main__':
