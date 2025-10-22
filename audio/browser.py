@@ -11,8 +11,10 @@ from typing import Optional, TYPE_CHECKING
 import threading
 import queue
 
+from app.utils import is_installed
 from audio.progress import GenerationProgressWindow
-from generators.xtts import XTTSPolishTTS
+if is_installed('torch'):
+    from generators.xtts import XTTSPolishTTS
 from audio.audio_converter import AudioConverter
 
 # ====================
@@ -276,32 +278,33 @@ class AudioBrowserWindow(ctk.CTkToplevel):
     # =====================
     # LOGIKA GENEROWANIA
     # =====================
+    if is_installed('torch'):
 
-    def _get_tts_model(self) -> Optional[XTTSPolishTTS]:
-        """Pobiera lub ładuje model TTS. Zgłasza błędy do GUI przez kolejkę."""
-        try:
-            if self.master.tts_model is None:
-                voice_path = self.master.global_config.get('voice_path')
-                if not voice_path or not Path(voice_path).exists():
-                    self.queue.put(lambda: messagebox.showwarning(
-                        "Brak pliku głosu",
-                        "Ścieżka do pliku głosu .wav nie jest ustawiona w Ustawieniach lub plik nie istnieje.\nUżywam domyślnego głosu (jeśli istnieje).",
-                        parent=self
-                    ))
-                    # xtts.py obsłuży None i weźmie domyślny `michal.wav`
-                    self.master.tts_model = XTTSPolishTTS(voice_path=None)
-                else:
-                    self.master.tts_model = XTTSPolishTTS(voice_path=voice_path)
-            return self.master.tts_model
-        except Exception as e:
-            self.queue.put(lambda: messagebox.showerror(
-                "Błąd modelu TTS",
-                f"Nie udało się załadować modelu XTTS:\n{e}\n\nUpewnij się, że masz pobrany model i że ścieżka do pliku głosu w Ustawieniach jest poprawna.",
-                parent=self
-            ))
-            if self.progress_window:
-                self.queue.put(lambda: self.progress_window.destroy())
-            return None
+        def _get_tts_model(self) -> Optional[XTTSPolishTTS]:
+            """Pobiera lub ładuje model TTS. Zgłasza błędy do GUI przez kolejkę."""
+            try:
+                if self.master.tts_model is None:
+                    voice_path = self.master.global_config.get('voice_path')
+                    if not voice_path or not Path(voice_path).exists():
+                        self.queue.put(lambda: messagebox.showwarning(
+                            "Brak pliku głosu",
+                            "Ścieżka do pliku głosu .wav nie jest ustawiona w Ustawieniach lub plik nie istnieje.\nUżywam domyślnego głosu (jeśli istnieje).",
+                            parent=self
+                        ))
+                        # xtts.py obsłuży None i weźmie domyślny `michal.wav`
+                        self.master.tts_model = XTTSPolishTTS(voice_path=None)
+                    else:
+                        self.master.tts_model = XTTSPolishTTS(voice_path=voice_path)
+                return self.master.tts_model
+            except Exception as e:
+                self.queue.put(lambda: messagebox.showerror(
+                    "Błąd modelu TTS",
+                    f"Nie udało się załadować modelu XTTS:\n{e}\n\nUpewnij się, że masz pobrany model i że ścieżka do pliku głosu w Ustawieniach jest poprawna.",
+                    parent=self
+                ))
+                if self.progress_window:
+                    self.queue.put(lambda: self.progress_window.destroy())
+                return None
 
     def _run_converter(self):
         """Uruchamia proces konwersji audio z ustawieniami z projektu."""

@@ -16,8 +16,11 @@ from pathlib import Path
 import threading
 
 from app.settings import SettingsWindow
-from app.utils import apply_remove_patterns, apply_replace_patterns, resource_path
-from generators.xtts import XTTSPolishTTS
+from app.utils import apply_remove_patterns, apply_replace_patterns, resource_path, is_installed
+
+if is_installed('torch'):
+    from generators.xtts import XTTSPolishTTS
+
 
 from app.entity import PatternItem
 from app.tooltip import CreateToolTip
@@ -89,8 +92,10 @@ class SubtitleStudioApp(ctk.CTk):
         # Przechowuje całą globalną konfigurację (z .subtitle_studio_config.json)
         self.global_config = {}
 
-        # Przechowuje załadowany model TTS, aby nie ładować go wielokrotnie
-        self.tts_model: Optional[XTTSPolishTTS] = None
+        if is_installed('torch'):
+
+            # Przechowuje załadowany model TTS, aby nie ładować go wielokrotnie
+            self.tts_model: Optional[XTTSPolishTTS] = None
         # Blokada uniemożliwiająca jednoczesne generowanie (np. pojedynczego pliku i wszystkich)
         self.generation_lock = threading.Lock()
 

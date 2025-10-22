@@ -1,6 +1,7 @@
 from tkinter import messagebox
 from typing import List
 import re, sys, os
+import importlib.util
 
 from app.entity import PatternItem
 
@@ -52,3 +53,7 @@ def apply_replace_patterns(lines: List[str], patterns: List[PatternItem]) -> Lis
             s = compiled[i].sub(pat.replace, s)
         out.append(s)
     return out
+
+
+def is_installed(package_name: str) -> bool:
+    return importlib.util.find_spec(package_name) is not None
