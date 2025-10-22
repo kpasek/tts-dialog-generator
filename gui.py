@@ -341,11 +341,6 @@ class SubtitleStudioApp(ctk.CTk):
         if not path:
             return
 
-        # === ZMIANA: Sprawdź niezapisane zmiany ===
-        if not self._check_unsaved_changes():
-            return  # Anulowano
-        # ========================================
-
         self.loaded_path = Path(path)
         self.lbl_filename.configure(text=str(self.loaded_path.name))
         try:
@@ -359,10 +354,8 @@ class SubtitleStudioApp(ctk.CTk):
     def open_project(self, path: str | None = None):
         """Opens a .json project file and loads its settings."""
         if path is None:
-            # === ZMIANA: Sprawdź niezapisane zmiany ===
             if not self._check_unsaved_changes():
-                return  # Anulowano
-            # ========================================
+                return
             initial_dir = self.global_config.get('start_directory')
             path = filedialog.askopenfilename(title="Otwórz projekt",
                                               filetypes=[("JSON", "*.json"), ("All", "*")],
@@ -390,7 +383,7 @@ class SubtitleStudioApp(ctk.CTk):
             self.set_status("Wczytano projekt")
             self.save_app_setting('last_project', path)
             self.project_config = cfg
-            self.has_unsaved_changes = False  # Świeżo załadowany projekt jest "zapisany"
+            self.has_unsaved_changes = False
         except Exception as e:
             messagebox.showerror("Błąd", f"Nie udało się wczytać konfiguracji:\n{e}")
 

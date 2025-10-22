@@ -2,18 +2,13 @@ from typing import Optional, List
 from .tts_base import TTSBase
 from app.utils import is_installed
 
-
-from elevenlabs.client import ElevenLabs
-
-
 if is_installed('elevenlabs'):
+    from elevenlabs.client import ElevenLabs
     from elevenlabs import Voice
 else:
-    # Zapewnij typy zastępcze, jeśli pakiet nie jest zainstalowany
+    # Zapewnij typy zastępcze
+    ElevenLabs = None
     Voice = None
-    generate = None
-    set_api_key = None
-    voices = None
 
 
 class ElevenLabsTTS(TTSBase):
@@ -29,6 +24,8 @@ class ElevenLabsTTS(TTSBase):
             api_key: The ElevenLabs API key.
             voice_id: The ID of the voice to use.
         """
+        if ElevenLabs is None:
+            raise ImportError("Pakiet 'elevenlabs' nie jest zainstalowany.")
 
         self.api_key = api_key
         self.client = ElevenLabs(api_key=api_key)
@@ -55,24 +52,20 @@ class ElevenLabsTTS(TTSBase):
     def available_voices(self) -> List[Voice]:
         """Lazily fetches the list of available voices from the API."""
         if self._voices is None:
-            response = self.client.voices.search()
+            response = self.client.voices.get_all()
             self._voices = response.voices
         return self._voices
 
     def tts(self, text: str, output_path: str) -> str:
         """
-        Generates speech and saves it as a .wav file. (ElevenLabs domyślnie generuje mp3,
-        ale nasz konwerter i tak to obsłuży, jeśli zapiszemy z rozszerzeniem .wav,
-        choć idealnie byłoby zapisać jako mp3 i zmienić logikę w browser.py.
-        Dla spójności z XTTS, zapisujemy jako .wav, co jest mylące, ale pydub to obsłuży)
-
-        Poprawka: `generate` zwraca bytes (audio), które zapisujemy.
-        `output_path` jest oczekiwane jako .wav, więc to zrobimy.
-        AudioConverter i Pygame/Pydub poradzą sobie z formatem wewnątrz.
+        Generates speech and saves it as an audio file.
+        The output format is mp3, but we save it as .wav
+        so our AudioConverter can pick it up. Pydub handles
+        the format conversion internally.
 
         Args:
             text: The text to synthesize.
-            output_path: The path to save the output audio file.
+            output_path: The path to save the output audio file (e.g., "output.wav").
 
         Returns:
             The output_path.
@@ -80,14 +73,18 @@ class ElevenLabsTTS(TTSBase):
         if not self.voice_id:
             raise ValueError("Voice ID not set for ElevenLabs")
 
-        audio = self.client.text_to_speech.convert(
+        audio_data = b""
+        audio_stream = self.client.text_to_speech.convert(
             text=text,
             voice_id=self.voice_id,
             model_id="eleven_multilingual_v2",
             output_format="mp3_44100_128",
         )
 
-        with open(output_path, 'wb') as f:
-            f.write(audio)
+        for chunk in audio_stream:
+            audio_data += chunk
+
+        with open(output_path[:-4]+".mp3", 'wb') as f:
+            f.write(audio_data)
 
         return output_path

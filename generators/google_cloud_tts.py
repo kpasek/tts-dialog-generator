@@ -2,15 +2,12 @@ from typing import Optional
 from .tts_base import TTSBase
 from app.utils import is_installed
 
-# === ZMIANA: Warunkowy import ===
 if is_installed('google.cloud.texttospeech'):
     import google.cloud.texttospeech as tts
 else:
     # Pozwól na import pliku, ale rzuć błąd przy próbie użycia
     tts = None
 
-
-# ===============================
 
 class GoogleCloudTTS(TTSBase):
     """
@@ -79,7 +76,6 @@ class GoogleCloudTTS(TTSBase):
             audio_encoding=tts.AudioEncoding.LINEAR16,
             speaking_rate=1.0
         )
-        # ==========================================
 
         response = self.client.synthesize_speech(
             input=synthesis_input,
