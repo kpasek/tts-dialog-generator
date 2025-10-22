@@ -1,4 +1,7 @@
-import torch
+from app.utils import is_installed
+
+if is_installed('torch'):
+    import torch
 import os
 from TTS.api import TTS
 from TTS.tts.configs.xtts_config import XttsConfig
