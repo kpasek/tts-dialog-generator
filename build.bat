@@ -1,7 +1,3 @@
 @echo off
 
-REM Buduj wersję online
-pyinstaller app.spec --online-only
-
-REM Buduj wersję pełną
-pyinstaller app.spec
+pyinstaller gui.py --name SubtitleStudio --noconsole --icon assets/icon512.ico --add-data="assets;assets"

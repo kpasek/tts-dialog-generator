@@ -184,3 +184,5 @@ yarl==1.22.0
 pygame
 google-cloud-texttospeech
 elevenlabs
+patchelf
+nuitka
