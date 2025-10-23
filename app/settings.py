@@ -40,15 +40,12 @@ class SettingsWindow(ctk.CTkToplevel):
         self.master = master
         self.torch_installed = torch_installed
         self.mode = mode # 'global' lub 'project'
-        # ===================================
-
-        # === ZMIANA: Dynamiczny tytuł i rozmiar ===
         if self.mode == 'global':
             self.title("Ustawienia Globalne")
-            self.geometry("800x750")
+            self.geometry("800x800")
         else:
             self.title("Ustawienia Projektu")
-            self.geometry("600x300") # Mniejsze okno dla ustawień projektu
+            self.geometry("600x300")
         # =======================================
 
         self.transient(master)
@@ -65,9 +62,8 @@ class SettingsWindow(ctk.CTkToplevel):
             self.project_frame.grid_columnconfigure(1, weight=1)
             self._create_project_tab(self.project_frame)
             if not self.master.current_project_path:
-                # To nie powinno się zdarzyć dzięki sprawdzeniu w gui.py, ale na wszelki wypadek
                  messagebox.showerror("Błąd", "Brak otwartego projektu.", parent=master)
-                 self.after(10, self.destroy)
+                 self.after(10, self.quit)
                  return
         # =============================================
 
