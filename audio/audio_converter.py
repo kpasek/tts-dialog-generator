@@ -163,20 +163,16 @@ class AudioConverter:
         tasks_ogg = []
         os.makedirs(output_dir, exist_ok=True)
 
-        with Executor(max_workers=os.cpu_count()) as executor:
-            for filename in os.listdir(audio_dir):
-                if filename.lower().endswith((".wav", ".ogg", ".mp3")):
-                    if filename.lower().endswith(".temp.ogg"):
-                        continue
+        for filename in os.listdir(audio_dir):
+            if filename.lower().endswith((".wav", ".ogg", ".mp3")):
+                if filename.lower().endswith(".temp.ogg"):
+                    continue
 
-                    input_path = os.path.join(audio_dir, filename)
-                    output_path_ogg = self.build_output_file_path(filename, output_dir)
+                input_path = os.path.join(audio_dir, filename)
+                output_path_ogg = self.build_output_file_path(filename, output_dir)
 
-                    tasks_ogg.append(executor.submit(
-                        self.parse_ogg, input_path, output_path_ogg))
+                self.parse_ogg(input_path, output_path_ogg)
 
-            for task_ogg in tasks_ogg:
-                task_ogg.result()
 
         print(f"✅ Zakończono przetwarzanie wszystkich plików audio dla {audio_dir}")
 

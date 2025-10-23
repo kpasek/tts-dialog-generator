@@ -1,29 +1,126 @@
-# 🎬 Subtitle Studio
+# 🎬 Subtitle Studio – Przewodnik użytkownika
 
-**Subtitle Studio** to narzędzie desktopowe (Python + CustomTkinter) do czyszczenia, przetwarzania i zarządzania napisami dialogowymi w grach i projektach lektorskich.  
-Aplikacja została zaprojektowana z myślą o prostocie obsługi oraz integracji z narzędziami TTS / dubbingu.
+Subtitle Studio to aplikacja desktopowa do czyszczenia i przygotowywania napisów dialogowych dla systemów TTS (Text-to-Speech) i Game Reader.
+Umożliwia wczytanie napisów, zastosowanie wzorców REGEX do usuwania lub poprawiania treści, generowanie dialogów głosowych oraz zarządzanie powiązanymi plikami audio.
 
----
+## 🧭 Workflow – krok po kroku
+### 1. Otwieranie napisów
 
-## ⚙️ Wymagania techniczne
+Uruchom aplikację Subtitle Studio.
 
-- **Python 3.10+**
-- Zależności (instalacja):  
-  ```bash
-  pip install -r requirements.txt
+W menu górnym wybierz:
+`Dialogi → Wczytaj napisy`
 
+Wskaż plik `.txt` zawierający napisy (np. subtitles.txt).
 
-## 📦 Modele referencyjne
+Zawartość pojawi się w głównym oknie po prawej stronie.
 
-Model STylish-TTS:  
-🔗 [https://huggingface.co/FashionFlora/StylishTTS-Pl](https://huggingface.co/FashionFlora/StylishTTS-Pl)
+💡 W każdej chwili możesz zapisać bieżący stan projektu wybierając `Projekt → Zapisz projekt`.
+Aplikacja zapamięta wybrane pliki, wzorce oraz katalog audio.
 
-Model XTTS_v2:  
-🔗 [https://huggingface.co/coqui/XTTS-v2](https://huggingface.co/coqui/XTTS-v2)
+### 2. Czyszczenie napisów – wzorce wycinające
 
----
+Po lewej stronie znajdziesz sekcję Wbudowane wzorce wycinające.
+Służą one do usuwania całych linii zawierających określone elementy (np. znaczniki \<i>, liczby, komentarze).
 
-## ⚙️ Instalacja
+Zaznacz wybrane wzorce (np. Usuń całe linie [*-]).
+
+Możesz dodać własne wzorce w sekcji Własne wzorce wycinające:
+
+- wpisz wyrażenie regularne (regexp),
+
+- opcjonalnie określ zamiennik,
+
+- kliknij `Dodaj`.
+
+- Kliknij przycisk `Zastosuj wzorce`, aby przetworzyć tekst.
+
+✨ Linie usunięte zostaną oznaczone jako odrzucone, a widok w podglądzie zostanie zaktualizowany.
+
+### 3. Poprawianie treści – wzorce podmieniające
+
+Niżej znajduje się sekcja Wbudowane wzorce podmieniające – automatycznie poprawiają treść napisów, np.:
+
+* zamieniają wielokrotne znaki interpunkcyjne,
+* usuwają znaki specjalne,
+* poprawiają trójkropki,
+* zastępują białe znaki pojedynczymi spacjami.
+
+Analogicznie możesz dodać własne wzorce podmieniające, by lepiej dopasować dane do modeli TTS.
+
+🔍 Dobrze przygotowane napisy (bez znaków specjalnych, skrótów, oznaczeń scen) znacząco poprawiają jakość generowanego głosu.
+
+### 4. Generowanie i odsłuchiwanie plików audio
+
+Po przetworzeniu napisów możesz generować i przeglądać dialogi:
+
+Wybierz katalog roboczy dla plików audio:
+`Dialogi → Wybierz katalog audio`
+
+W głównym oknie:
+
+Każdy wiersz odpowiada jednej linii dialogowej.
+
+Obok znajduje się przycisk `Odtwórz`, który umożliwia odsłuch wybranego pliku audio. Można też kliknąć 2x na liście dialogowej, aby odsługać audio.
+
+Obok przycisku dostępna jest lista rozwijana z odnalezionymi plikami audio (jeśli istnieje kilka wersji).
+
+Aby wygenerować nowy plik audio, kliknij przycisk `Generuj` przy danej linii.
+
+## 🗣️ Obsługiwane modele TTS:
+
+* ElevenLabs,
+* Google Cloud TTS,
+* XTTSv2 (lokalny model).
+
+### 5. Usuwanie plików audio
+
+Subtitle Studio pozwala zarządzać nagraniami audio w sposób elastyczny:
+
+🔸 Usuwanie pojedynczego pliku
+
+Kliknij Usuń obok konkretnej linii – spowoduje to usunięcie odpowiadającego jej pliku audio.
+
+🔸 Usuwanie wszystkich plików dla dialogu
+
+Kliknij Usuń Wsz., aby skasować wszystkie warianty audio powiązane z daną linią.
+
+🔸 Masowe usuwanie plików
+
+W menu wybierz:
+`Dialogi → Masowe usuwanie plików audio`
+
+Wprowadź wzorce `REGEX` dopasowujące treść dialogów, których pliki chcesz usunąć.
+
+Kliknij `Dodaj` aby dodać wzorzec do listy.
+
+Wciśnij `Przelicz`, aby aplikacja wyświetliła liczbę pasujących linii i plików.
+
+Kliknij `Usuń pliki`, aby wykonać operację.
+
+## 6. Wyszukiwanie i podgląd
+
+W górnej części okna znajduje się pole Szukaj – możesz tu wprowadzić dowolny wzorzec (także REGEX), by szybko odszukać konkretne linie w podglądzie.
+
+## 7. Eksport napisów
+
+Po zakończeniu pracy możesz zapisać wyniki:
+
+`Pobierz – napisy dla TTS` → zapisuje oczyszczoną wersję do użycia z generatorami głosu.
+
+`Pobierz – napisy dla Game Reader` → przygotowuje napisy w formacie zgodnym z Game Readerem.
+
+## ⚙️ Ustawienia
+
+W zakładce Ustawienia możesz określić m.in.:
+
+* domyślne katalogi wejściowe i wyjściowe,
+* model TTS do użycia,
+* parametry generowania (głos, prędkość, język),
+* parametry przetwarzania audio
+* host i port do lokalnego modelu XTTSv2 (jeśli używasz wersji offline).
+
+## 🧩 Instalacja i uruchamianie modelu lokalnego (XTTSv2)
 
 Zalecane jest uruchomienie projektu w środowisku wirtualnym Pythona.
 
@@ -34,132 +131,28 @@ source .venv/bin/activate # w linuxie
 ```
 
 Następnie zainstaluj wymagane zależności:
-```shell
+```bash
 pip install -r requirements.txt
 ```
 
-W przypadku posiadania karty NVIDIA i chęci generowania na GPU
-W pierwszej kolejności należy zainstalować CUDA
-`https://developer.nvidia.com/cuda-12-9-1-download-archive`
-Póki co obsługiwana jest wersji 12
-    UWAGA! instalacja CUDA może nadpisać aktualne sterowniki do karty graficznej!
-```shell
+W przypadku posiadania karty NVIDIA i chęci generowania na GPU W pierwszej kolejności należy zainstalować CUDA https://developer.nvidia.com/cuda-12-9-1-download-archive Póki co obsługiwana jest wersji 12 
+
+### UWAGA! instalacja CUDA może nadpisać aktualne sterowniki do karty graficznej!
+
+```bash
 pip uninstall torch torchvision torchaudio
 pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu129
 ```
 
-Do katalogu `generators/stylish_model/checkpoint_final` należy przekopiować wszystkie pliki `.bin` z repozytorium twórcy modelu
-`https://huggingface.co/spaces/FashionFlora/STylish-TTS-Pl/tree/main/checkpoint_final`
+Po udanej instalacji powinno się udać uruchomić model za pomocą (w wirtualnym środowisku):
+```bash
+python tts_api.py
+```
 
-### 💡 Wskazówka:
+lub uruchom skrypt
+```
+run_tts.bat
+```
+
+💡 Wskazówka:
 Jeśli podczas instalacji pojawią się błędy, możesz je skopiować i wkleić do czatu GPT – często potrafi pomóc w ich rozwiązaniu.
-
-## 🚀 Funkcje główne
-
-### 🧹 1. Czyszczenie napisów
-- Usuń zbędne elementy z plików `.txt` (np. znaczniki `[NPC]`, `<html>`, `{TAGI}` itp.)
-- Używaj **wbudowanych filtrów** lub definiuj własne wyrażenia regularne.
-- Podgląd zmian w czasie rzeczywistym.
-- Eksportuj oczyszczone napisy jako:
-  - Napisy dla **Game Readera**,
-  - Napisy dla **TTS (Text-to-Speech)**.
-
----
-
-### 🔄 2. Własne wzorce
-- Dodawaj własne **reguły zamiany i usuwania tekstu**.
-- Możesz zaimportować wzorce z pliku `.csv`.
-- Każdy wzorzec obsługuje:
-  - wyrażenie regularne (`regex`),
-  - tekst zastępczy (`replace`),
-  - opcję rozróżniania wielkości liter (`Aa`).
-
----
-
-### 💬 3. Przeglądanie dialogów
-Po przetworzeniu napisów możesz:
-- Otworzyć **okno podglądu dialogów** (`Dialogi → Przeglądaj dialogi`),
-- W lewej kolumnie przeglądać listę wszystkich linii dialogowych (z wyszukiwaniem),
-- W prawej części widzieć przypisane pliki audio dla każdej linii.
-
-#### 💡 Możliwości:
-- Dwuklik na dialog → natychmiastowe odtworzenie pierwszego przypisanego pliku audio,  
-- Odtwarzanie plików `.wav` / `.ogg` z poziomu aplikacji,  
-- Wybór katalogu audio,  
-- Usuwanie pojedynczych lub wszystkich plików,  
-- Placeholder do generowania brakujących nagrań (np. z TTS).  
-
----
-
-### 🧩 4. System projektów
-- Wszystkie ustawienia możesz zapisać jako projekt `.json`.  
-- Projekt przechowuje:
-  - aktywne filtry i reguły,
-  - ścieżkę do pliku z napisami,
-  - katalog audio.  
-- Przy kolejnym uruchomieniu aplikacja automatycznie ładuje ostatni projekt.
-
----
-
-## 🖼️ Przykładowy workflow
-
-1. **Wczytaj plik napisów**
-   - Menu: `Projekt → Otwórz projekt` lub przycisk **Wczytaj**.
-2. **Zastosuj filtry i wzorce**
-   - Wybierz, które wzorce mają być aktywne.
-   - Kliknij **Zastosuj**.
-3. **Podgląd wyników**
-   - Po prawej stronie zobaczysz przetworzone dialogi.
-   - Możesz wyszukiwać po słowach kluczowych.
-4. **Zapisz efekt**
-   - `Pobierz - napisy dla Game Reader`  
-     → wersja “czysta”, gotowa do użycia w grze.
-   - `Pobierz - napisy dla TTS`  
-     → wersja z poprawkami dla syntezatora mowy.
-5. **Przeglądaj dialogi i pliki audio**
-   - Menu: `Dialogi → Przeglądaj dialogi`
-   - Sprawdź, które dialogi mają przypisane pliki `.wav / .ogg`.
-
----
-
-## 🧠 Przykłady użycia
-
-### 🔸 Przykład 1: Czyszczenie znaczników z napisów
-**Wejście:**
-
-`[NPC] <em>Hecat</em>: Welcome to the city!`
-
-**Reguły aktywne:**
-- Usuń zawartość w `[]`
-- Usuń zawartość w `<>`
-
-**Wynik:**
-
-`Hecat: Welcome to the city!`
-
----
-
-### 🔸 Przykład 2: Zamiana znaków specjalnych
-**Wejście:**
-
-`Hello?!?!`
-
-**Reguły aktywne:**
-- `?!` → `?`
-- `?{2,}` → `?`
-
-**Wynik:**
-
-`Hello?`
-
-
----
-
-### 🔸 Przykład 3: Przegląd dialogów z plikami audio
-
-| Dialog ID | Tekst dialogu              | Pliki audio                            |
-|------------|----------------------------|----------------------------------------|
-| 001        | Hello, traveler!          | `output1 (1).ogg`, `ready/output1 (1).ogg` |
-| 002        | Welcome to the guild.     | *(Brak plików — przycisk Generuj)*     |
-
----
