@@ -43,10 +43,10 @@ BUILTIN_REMOVE = [
     (PatternItem(r" ", "", True), "Usuń niektóre niewidoczne znaki"),
 ]
 BUILTIN_REPLACE = [
-    (PatternItem(r"\[[^\]]*\]+", "", True), "Usuń treść [.*]"),
-    (PatternItem(r"\<[^\>]*\>+", "", True), "Usuń treść <.*>"),
-    (PatternItem(r"\{[^\}]*\}+", "", True), "Usuń treść {.*}"),
-    (PatternItem(r"\([^\)]*\)}+", "", True), "Usuń treść (.*)"),
+    (PatternItem(r"\[[^\]]*\]+", " ", True), "Usuń treść [.*]"),
+    (PatternItem(r"\<[^\>]*\>+", " ", True), "Usuń treść <.*>"),
+    (PatternItem(r"\{[^\}]*\}+", " ", True), "Usuń treść {.*}"),
+    (PatternItem(r"\([^\)]*\)}+", " ", True), "Usuń treść (.*)"),
     (PatternItem(r"…", "...", True), "Popraw trójkropek"),
     (PatternItem(r"\.{2,}", ".", True), "Trójkropek > kropka"),
     (PatternItem(r"\?!", "?", True), "?! -> ?"),
