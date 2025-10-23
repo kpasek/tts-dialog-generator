@@ -1,23 +1,11 @@
 # -*- mode: python ; coding: utf-8 -*-
 
-import os
-from PyInstaller.utils.hooks import get_package_paths, collect_submodules, collect_data_files
-
-torch_path = get_package_paths('torch')[0]
-torch_layers = os.path.join(torch_path, 'nn')
-torch_jit = os.path.join(torch_path, 'jit')
-
-
-datas = [('assets', 'assets')]
-datas += collect_data_files('TTS', include_py_files=False)
-datas += collect_data_files('trainer', include_py_files=False)
-datas += collect_data_files('torch', include_py_files=True)
 
 a = Analysis(
     ['gui.py'],
     pathex=[],
     binaries=[],
-    datas= datas,
+    datas=[('assets', 'assets')],
     hiddenimports=[],
     hookspath=[],
     hooksconfig={},
@@ -47,6 +35,7 @@ exe = EXE(
     entitlements_file=None,
     icon=['assets\\icon512.ico'],
 )
+
 coll = COLLECT(
     exe,
     a.binaries,
