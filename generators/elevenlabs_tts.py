@@ -4,11 +4,12 @@ from app.utils import is_installed
 
 if is_installed('elevenlabs'):
     from elevenlabs.client import ElevenLabs
-    from elevenlabs import Voice
+    from elevenlabs import Voice, save # Import save
 else:
     # Zapewnij typy zastępcze
     ElevenLabs = None
     Voice = None
+    save = None
 
 
 class ElevenLabsTTS(TTSBase):
@@ -59,9 +60,8 @@ class ElevenLabsTTS(TTSBase):
     def tts(self, text: str, output_path: str) -> str:
         """
         Generates speech and saves it as an audio file.
-        The output format is mp3, but we save it as .wav
-        so our AudioConverter can pick it up. Pydub handles
-        the format conversion internally.
+        The output format requested is mp3, but saved with a .wav extension
+        for compatibility with the converter pipeline. Pydub handles the format.
 
         Args:
             text: The text to synthesize.

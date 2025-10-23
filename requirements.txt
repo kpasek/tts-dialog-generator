@@ -15,3 +15,5 @@ pygame
 google-cloud-texttospeech
 elevenlabs
 pyinstaller
+Flask
+requests

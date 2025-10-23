@@ -6,3 +6,4 @@ pygame
 google-cloud-texttospeech
 elevenlabs
 pydub
+requests
