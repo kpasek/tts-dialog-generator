@@ -603,8 +603,7 @@ class SubtitleStudioApp(ctk.CTk):
             "custom_replace": [p.to_json() for p in self.custom_replace],
             "subtitle_path": str(self.loaded_path) if self.loaded_path else None,
             "audio_path": str(self.audio_dir.absolute()) if self.audio_dir else None,
-            "active_tts_model": self.project_config.get('active_tts_model',
-                                                        'XTTS' if self.torch_installed else "ElevenLabs"),
+            "active_tts_model": self.project_config.get('active_tts_model', 'XTTS'),
             "base_audio_speed": self.project_config.get('base_audio_speed', 1.1)
         })
         return current_cfg
@@ -1425,7 +1424,7 @@ class SubtitleStudioApp(ctk.CTk):
 
             # --- Wywołanie TTS (API lub lokalnie) ---
             if self.active_model_name == 'XTTS':
-                self._call_xtts_api(text, str(output_path))
+                self._call_local_api(text, str(output_path))
             elif isinstance(self.tts_model, TTSBase):  # Dla modeli online
                 self.tts_model.tts(text, str(output_path))
             else:
@@ -1568,7 +1567,7 @@ class SubtitleStudioApp(ctk.CTk):
 
                 # --- Wywołanie TTS (API lub lokalnie) ---
                 if self.active_model_name == 'XTTS':
-                    self._call_xtts_api(text, str(output_path))
+                    self._call_local_api(text, str(output_path))
                 elif isinstance(self.tts_model, TTSBase):  # Modele online
                     self.tts_model.tts(text, str(output_path))
                 else:
@@ -1644,26 +1643,26 @@ class SubtitleStudioApp(ctk.CTk):
             # Odśwież stan przycisków po zakończeniu
             self.queue.put(self.update_audio_buttons_state)
 
-    def _call_xtts_api(self, text: str, output_file: str):
-        """Helper method to call the XTTS API server."""
+    def _call_local_api(self, text: str, output_file: str):
+        """Helper method to call the Local API server."""
         if not isinstance(self.tts_model, dict) or 'url' not in self.tts_model or 'session' not in self.tts_model:
             raise ConnectionError(
-                "Klient XTTS API nie jest poprawnie skonfigurowany.")
+                "Klient Local API nie jest poprawnie skonfigurowany.")
 
         api_url = self.tts_model['url']
         session = self.tts_model['session']
-        # Pobierz ścieżkę głosu
-        voice_path = self.global_config.get('xtts_voice_path', '')
-
         payload = {
             "text": text,
             "output_file": output_file,
-            "voice_file": voice_path  # Wyślij ścieżkę do API
         }
+        if self.active_model_name == "XTTS":
+            voice_path = self.global_config.get('xtts_voice_path', '')
+            payload["voice_file"] =  voice_path
+
 
         try:
             response = session.post(
-                api_url, json=payload, timeout=300)  # Timeout 5 minut
+                api_url, json=payload, timeout=30)  # Timeout 5 minut
             response.raise_for_status()  # Rzuci błąd dla 4xx/5xx
 
             response_data = response.json()
@@ -1673,10 +1672,10 @@ class SubtitleStudioApp(ctk.CTk):
 
         except requests.exceptions.RequestException as e:
             raise ConnectionError(
-                f"Błąd połączenia z XTTS API ({api_url}): {e}")
+                f"Błąd połączenia z Local API ({api_url}): {e}")
         except json.JSONDecodeError:
             raise ConnectionError(
-                f"Nieprawidłowa odpowiedź JSON z XTTS API: {response.text}")
+                f"Nieprawidłowa odpowiedź JSON z Local API: {response.text}")
 
     def export_patterns_to_csv(self):
         """Exports custom 'replace' patterns to CSV file."""
@@ -1709,7 +1708,7 @@ class SubtitleStudioApp(ctk.CTk):
 
 
 if __name__ == '__main__':
-    ctk.set_appearance_mode('light')
+    ctk.set_appearance_mode('System')
     ctk.set_default_color_theme('blue')
     app = SubtitleStudioApp()
     app.mainloop()
