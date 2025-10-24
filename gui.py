@@ -881,7 +881,7 @@ class SubtitleStudioApp(ctk.CTk):
             # 5. Save text file (bez pokazywania komunikatu)
             with open(text_file_dest_path, 'w', encoding='utf-8') as f:
                 f.write('\n'.join(self.processed_clean))
-            preset_template["text_file_path"] = text_filename  # Relative path
+            preset_template["text_file_path"] = str(text_file_dest_path.absolute())
 
             # 6. Handle audio
             if copy_audio:
@@ -896,7 +896,7 @@ class SubtitleStudioApp(ctk.CTk):
                 print(f"Kopiuję {source_audio_path} do {audio_dest_folder}")
                 shutil.copytree(str(source_audio_path), str(audio_dest_folder))
 
-                preset_template["audio_dir"] = "audio"  # Relative path
+                preset_template["audio_dir"] = str(audio_dest_folder.absolute())
             else:
                 # Use absolute path to existing /ready dir
                 preset_template["audio_dir"] = str(source_audio_path.absolute())
@@ -1578,6 +1578,11 @@ class SubtitleStudioApp(ctk.CTk):
 
                 generated_count += 1  # Zliczaj tylko faktycznie wygenerowane
 
+            self.queue.put(lambda: self.progress_window.destroy())
+            final_message = f"Pomyślnie wygenerowano {generated_count} i pominięto {skipped_count} plików."
+            self.queue.put(lambda msg=final_message: messagebox.showinfo("Zakończono", msg, parent=self))
+            self.queue.put(lambda: self.set_status(f"Zakończono generowanie ({generated_count} nowych)."))
+
         except InterruptedError:
             self.queue.put(
                 lambda: self.progress_window.destroy() if self.progress_window else None)
@@ -1598,6 +1603,7 @@ class SubtitleStudioApp(ctk.CTk):
             # Odśwież stan przycisków po zakończeniu
             self.queue.put(self.update_audio_buttons_state)
 
+
     def _task_convert_all(self):
         """Worker thread task for converting all raw audio files."""
         try:
@@ -1616,6 +1622,8 @@ class SubtitleStudioApp(ctk.CTk):
                 lambda: messagebox.showinfo("Zakończono", "Konwersja audio zakończona.", parent=self)
             )
             self.queue.put(lambda: self.set_status("Konwersja audio zakończona."))
+
+            self.queue.put(lambda: self.progress_window.destroy())
 
         except InterruptedError:
             self.queue.put(
