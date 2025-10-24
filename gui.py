@@ -433,7 +433,8 @@ class SubtitleStudioApp(ctk.CTk):
             return
 
         self.loaded_path = Path(path)
-        self.lbl_filename.configure(text=str(self.loaded_path.name))
+        if not self.current_project_path:
+            self.lbl_filename.configure(text=str(self.loaded_path.name))
         try:
             with open(self.loaded_path, "r", encoding="utf-8", errors="replace") as f:
                 self.original_lines = f.read().splitlines()
@@ -510,7 +511,7 @@ class SubtitleStudioApp(ctk.CTk):
                 f"Wczytano projekt: {self.current_project_path.name}")
             self.save_app_setting('last_project', path)
             self.has_unsaved_changes = False  # Świeżo załadowany
-
+            self.lbl_filename.configure(text=os.path.basename(path))
         except Exception as e:
             messagebox.showerror(
                 "Błąd wczytywania projektu", f"Nie udało się wczytać konfiguracji:\n{e}")
