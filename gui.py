@@ -1662,7 +1662,7 @@ class SubtitleStudioApp(ctk.CTk):
 
         try:
             response = session.post(
-                api_url, json=payload, timeout=30)  # Timeout 5 minut
+                api_url, json=payload, timeout=90)  # Timeout 
             response.raise_for_status()  # Rzuci błąd dla 4xx/5xx
 
             response_data = response.json()
