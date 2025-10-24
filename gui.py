@@ -9,6 +9,7 @@ import csv
 import json
 import sys
 import os
+import shutil
 from typing import List, Optional, Tuple
 from pathlib import Path
 import threading
@@ -59,6 +60,7 @@ BUILTIN_REPLACE = [
 
 try:
     import pygame
+
     pygame.mixer.init()
     PYGAME_AVAILABLE = True
 except (ImportError, pygame.error) as e:
@@ -108,6 +110,7 @@ class SubtitleStudioApp(ctk.CTk):
         self.tts_model: Optional[TTSBase | requests.Session] = None
         self.active_model_name: str | None = None
         self.generation_lock = threading.Lock()
+        self.conversion_lock = threading.Lock()
         self.cancel_generation_event = threading.Event()
         self.queue = queue.Queue()
 
@@ -121,7 +124,7 @@ class SubtitleStudioApp(ctk.CTk):
 
     def mark_as_unsaved(self, *args):
         """Flags the current project as having unsaved changes and updates status."""
-        if self.current_project_path: # Tylko jeśli projekt jest załadowany/zapisany
+        if self.current_project_path:  # Tylko jeśli projekt jest załadowany/zapisany
             self.has_unsaved_changes = True
             if "Gotowy" in self.status.cget("text") and "niezapisane" not in self.status.cget("text"):
                 self.set_status(f"{self.status.cget('text')} (niezapisane zmiany)")
@@ -131,9 +134,9 @@ class SubtitleStudioApp(ctk.CTk):
         menubar = tk.Menu(self)
 
         config_menu = tk.Menu(menubar, tearoff=0)
-        config_menu.add_command(label="Otwórz projekt (.json)...", command=self.open_project)
+        config_menu.add_command(label="Otwórz projekt (.json)", command=self.open_project)
         config_menu.add_command(label="Zapisz projekt", command=self.save_project)
-        config_menu.add_command(label="Zapisz jako...", command=self.save_project_as)
+        config_menu.add_command(label="Zapisz jako", command=self.save_project_as)
         config_menu.add_separator()
         config_menu.add_command(label="Zamknij projekt", command=self.close_project)
         config_menu.add_separator()
@@ -141,22 +144,44 @@ class SubtitleStudioApp(ctk.CTk):
         menubar.add_cascade(label="Projekt", menu=config_menu)
 
         gen_menu = tk.Menu(menubar, tearoff=0)
-        gen_menu.add_command(label="Wczytaj napisy (.txt)...", command=self.load_file)
+        gen_menu.add_command(
+            label="Wczytaj napisy", command=self.load_file)
         gen_menu.add_separator()
-        gen_menu.add_command(label="Wybierz katalog audio...", command=self.choose_audio_dir)
-        gen_menu.add_command(label="Generuj wszystkie brakujące", command=self.start_generate_all)
+        # *** Koniec zmiany ***
+        gen_menu.add_command(
+            label="Wybierz katalog audio", command=self.choose_audio_dir)
+        gen_menu.add_command(
+            label="Generuj dialogi", command=self.start_generate_all)
+
+        gen_menu.add_command(
+            label="Konwertuj audio na ogg", command=self.start_convert_all)
+
         gen_menu.add_separator()
-        gen_menu.add_command(label="Masowe usuwanie dialogów...", command=self.open_audio_deleter)
+        # *** ZMIANA: Przeniesione i dodane opcje ***
+        gen_menu.add_command(
+            label="Pobierz napisy dla Game Reader", command=self.download_clean)
+        gen_menu.add_command(
+            label="Pobierz napisy dla TTS", command=self.download_replace)
+        gen_menu.add_command(
+            label="Generuj preset dla Game Reader", command=self.generate_game_reader_preset)
+
         menubar.add_cascade(label="Dialogi", menu=gen_menu)
 
         patterns_menu = tk.Menu(menubar, tearoff=0)
-        patterns_menu.add_command(label="Importuj wzorce z CSV...", command=self.import_patterns_from_csv)
-        patterns_menu.add_command(label="Eksportuj wzorce do CSV...", command=self.export_patterns_to_csv)
+        patterns_menu.add_command(
+            label="Importuj wzorce z CSV", command=self.import_patterns_from_csv)
+        patterns_menu.add_command(
+            label="Eksportuj wzorce do CSV", command=self.export_patterns_to_csv)
+        patterns_menu.add_separator()
+        patterns_menu.add_command(
+            label="Usuwanie dialogów", command=self.open_audio_deleter)
         menubar.add_cascade(label="Wzorce", menu=patterns_menu)
 
         settings_menu = tk.Menu(menubar, tearoff=0)
-        settings_menu.add_command(label="Ustawienia aplikacji...", command=self.open_global_settings)
-        settings_menu.add_command(label="Ustawienia projektu...", command=self.open_project_settings)
+        settings_menu.add_command(
+            label="Ustawienia aplikacji", command=self.open_global_settings)
+        settings_menu.add_command(
+            label="Ustawienia projektu", command=self.open_project_settings)
         menubar.add_cascade(label="Ustawienia", menu=settings_menu)
 
         self.config(menu=menubar)
@@ -178,52 +203,74 @@ class SubtitleStudioApp(ctk.CTk):
         self.lbl_filename = ctk.CTkLabel(left, text="Brak wczytanego pliku")
         self.lbl_filename.grid(row=0, column=0, sticky="ew", pady=(0, 8), padx=5)
 
-        ctk.CTkLabel(left, text="Wbudowane wzorce wycinające").grid(row=1, column=0, sticky="we", padx=6)
-        self._create_builtin_list(left, self.builtin_remove, self.builtin_remove_state, 2)
+        ctk.CTkLabel(left, text="Wbudowane wzorce wycinające").grid(
+            row=1, column=0, sticky="we", padx=6)
+        self._create_builtin_list(
+            left, self.builtin_remove, self.builtin_remove_state, 2)
 
-        ctk.CTkLabel(left, text="Wbudowane wzorce podmieniające").grid(row=3, column=0, sticky="we", padx=6)
-        self._create_builtin_list(left, self.builtin_replace, self.builtin_replace_state, 4)
+        ctk.CTkLabel(left, text="Wbudowane wzorce podmieniające").grid(
+            row=3, column=0, sticky="we", padx=6)
+        self._create_builtin_list(
+            left, self.builtin_replace, self.builtin_replace_state, 4)
 
         # --- CENTER: Custom Patterns ---
         self.center_frame = ctk.CTkFrame(root_grid, width=500)
         self.center_frame.grid_columnconfigure(0, weight=1)
         self.center_frame.grid(row=0, column=1, sticky="nsew", padx=(0, 10))
         self.center_frame.grid_rowconfigure(1, weight=1)
-        self.center_frame.grid_rowconfigure(4, weight=1) # Zmieniono z 5 na 4
+        self.center_frame.grid_rowconfigure(
+            4, weight=1)  # Zmieniono z 5 na 4
 
-        ctk.CTkLabel(self.center_frame, text="Własne wzorce wycinające").grid(row=0, column=0, sticky="w", padx=6)
+        ctk.CTkLabel(self.center_frame, text="Własne wzorce wycinające").grid(
+            row=0, column=0, sticky="w", padx=6)
         self.custom_remove_frame = ctk.CTkScrollableFrame(self.center_frame)
-        self.custom_remove_frame.grid(row=1, column=0, sticky="nsew", padx=6, pady=(2, 6))
+        self.custom_remove_frame.grid(
+            row=1, column=0, sticky="nsew", padx=6, pady=(2, 6))
 
         clean_inline_frame = self.build_clean_list_frame(self.center_frame, 2)
-        self.ent_remove_pattern = ctk.CTkEntry(clean_inline_frame, placeholder_text="regexp")
-        self.ent_remove_pattern.pack(side="left", fill="x", expand=True, padx=(4, 2))
-        self.ent_remove_replace = ctk.CTkEntry(clean_inline_frame, placeholder_text="zamień na")
-        self.ent_remove_replace.pack(side="left", fill="x", expand=True, padx=(2, 2))
+        self.ent_remove_pattern = ctk.CTkEntry(
+            clean_inline_frame, placeholder_text="regexp")
+        self.ent_remove_pattern.pack(
+            side="left", fill="x", expand=True, padx=(4, 2))
+        self.ent_remove_replace = ctk.CTkEntry(
+            clean_inline_frame, placeholder_text="zamień na")
+        self.ent_remove_replace.pack(
+            side="left", fill="x", expand=True, padx=(2, 2))
         self.var_remove_ignore = tk.BooleanVar(value=False)
-        checkbox_rem = ctk.CTkCheckBox(clean_inline_frame, text="Aa", variable=self.var_remove_ignore)
+        checkbox_rem = ctk.CTkCheckBox(
+            clean_inline_frame, text="Aa", variable=self.var_remove_ignore)
         checkbox_rem.pack(side="left", padx=(2, 4))
         CreateToolTip(checkbox_rem, 'Uwzględnij wielkość znaków')
-        ctk.CTkButton(clean_inline_frame, text="Dodaj", command=self.add_inline_remove).pack(side="left", padx=2)
+        ctk.CTkButton(clean_inline_frame, text="Dodaj", command=self.add_inline_remove).pack(
+            side="left", padx=2)
 
         replace_top_frame = ctk.CTkFrame(self.center_frame)
         replace_top_frame.grid(row=3, column=0, sticky="ew", pady=(4, 4))
-        lab_rep = ctk.CTkLabel(replace_top_frame, text="Własne wzorce podmieniające")
+        lab_rep = ctk.CTkLabel(replace_top_frame,
+                               text="Własne wzorce podmieniające")
         lab_rep.pack(side="left", anchor="w", fill="x", expand=False, padx=6)
 
         self.custom_replace_frame = ctk.CTkScrollableFrame(self.center_frame)
-        self.custom_replace_frame.grid(row=4, column=0, sticky="nsew", padx=6, pady=(2, 6))
+        self.custom_replace_frame.grid(
+            row=4, column=0, sticky="nsew", padx=6, pady=(2, 6))
 
-        replace_inline_frame = self.build_clean_list_frame(self.center_frame, 5) # Row 5
-        self.ent_replace_pattern = ctk.CTkEntry(replace_inline_frame, placeholder_text="regexp")
-        self.ent_replace_pattern.pack(side="left", fill="x", expand=True, padx=(4, 2))
-        self.ent_replace_replace = ctk.CTkEntry(replace_inline_frame, placeholder_text="zamień na")
-        self.ent_replace_replace.pack(side="left", fill="x", expand=True, padx=(2, 2))
+        replace_inline_frame = self.build_clean_list_frame(
+            self.center_frame, 5)  # Row 5
+        self.ent_replace_pattern = ctk.CTkEntry(
+            replace_inline_frame, placeholder_text="regexp")
+        self.ent_replace_pattern.pack(
+            side="left", fill="x", expand=True, padx=(4, 2))
+        self.ent_replace_replace = ctk.CTkEntry(
+            replace_inline_frame, placeholder_text="zamień na")
+        self.ent_replace_replace.pack(
+            side="left", fill="x", expand=True, padx=(2, 2))
         self.var_replace_ignore = tk.BooleanVar(value=False)
-        ignore_checkbox = ctk.CTkCheckBox(replace_inline_frame, text="Aa", variable=self.var_replace_ignore)
+        ignore_checkbox = ctk.CTkCheckBox(
+            replace_inline_frame, text="Aa", variable=self.var_replace_ignore)
         ignore_checkbox.pack(side="left", padx=(2, 4))
         CreateToolTip(ignore_checkbox, 'Uwzględnij wielkość znaków')
-        ctk.CTkButton(replace_inline_frame, text="Dodaj", command=self.add_inline_replace).pack(side="left", padx=2)
+        ctk.CTkButton(replace_inline_frame, text="Dodaj", command=self.add_inline_replace).pack(
+            side="left", padx=2)
 
         # --- RIGHT: Preview & Actions ---
         right = ctk.CTkFrame(root_grid)
@@ -234,31 +281,26 @@ class SubtitleStudioApp(ctk.CTk):
         # Stats and Apply button
         stats_frame = ctk.CTkFrame(right)
         stats_frame.grid(row=0, column=0, sticky="ew", pady=(0, 8))
-        ctk.CTkButton(stats_frame, text="Zastosuj wzorce", command=self.apply_processing).pack(side="left", padx=5)
+        ctk.CTkButton(stats_frame, text="Zastosuj wzorce",
+                      command=self.apply_processing).pack(side="left", padx=5)
 
         self.lbl_count_orig = ctk.CTkLabel(stats_frame, text="Linie org.: 0")
         self.lbl_count_orig.pack(side="left", anchor="w", padx=5)
         self.lbl_count_after = ctk.CTkLabel(stats_frame, text="Linie po: 0")
         self.lbl_count_after.pack(side="left", anchor="w", padx=5)
 
-
-        self.btn_download_clean = ctk.CTkButton(stats_frame, text="Pobierz - napisy dla Game Reader",
-                                                command=self.download_clean)
-        self.btn_download_replace = ctk.CTkButton(stats_frame, text="Pobierz - napisy dla TTS",
-                                                  command=self.download_replace)
-        self.btn_download_clean.pack(side="right", padx=5)
-        self.btn_download_replace.pack(side="right", padx=5)
-
         # Audio buttons
         audio_btn_frame = ctk.CTkFrame(right)
-        audio_btn_frame.grid(row=2, column=0, sticky="ew", pady=(0, 5), padx=5) # Row 2
+        audio_btn_frame.grid(
+            row=2, column=0, sticky="ew", pady=(0, 5), padx=5)  # Row 2
 
         self.play_button = ctk.CTkButton(audio_btn_frame, text="▶️ Odtwórz", width=80, command=self.play_selected_audio,
                                          state="disabled")
         self.play_button.pack(side="left", padx=(0, 4))
 
         self.audio_select_var = tk.StringVar(value="(brak plików)")
-        self.audio_select = ctk.CTkOptionMenu(audio_btn_frame, variable=self.audio_select_var, values=["(brak plików)"])
+        self.audio_select = ctk.CTkOptionMenu(
+            audio_btn_frame, variable=self.audio_select_var, values=["(brak plików)"])
         self.audio_select.pack(side="left", padx=(4, 8))
 
         if not PYGAME_AVAILABLE:
@@ -278,20 +320,25 @@ class SubtitleStudioApp(ctk.CTk):
 
         # Search bar
         search_frame = ctk.CTkFrame(right)
-        search_frame.grid(row=3, column=0, sticky="ew", pady=(0, 5), padx=5) # Row 3
+        search_frame.grid(
+            row=3, column=0, sticky="ew", pady=(0, 5), padx=5)  # Row 3
         search_frame.grid_columnconfigure(0, weight=1)
 
-        self.search_entry = ctk.CTkEntry(search_frame, placeholder_text="Przeszukaj podgląd")
+        self.search_entry = ctk.CTkEntry(
+            search_frame, placeholder_text="Przeszukaj podgląd")
         self.search_entry.grid(row=0, column=0, sticky="ew")
         self.search_entry.bind("<Return>", lambda event: self.apply_patterns())
-        self.search_entry.bind("<Control-BackSpace>", lambda event: self.search_entry.delete(0, tk.END))
+        self.search_entry.bind(
+            "<Control-BackSpace>", lambda event: self.search_entry.delete(0, tk.END))
 
-        self.search_button = ctk.CTkButton(search_frame, text="Szukaj", command=self.apply_patterns)
+        self.search_button = ctk.CTkButton(
+            search_frame, text="Szukaj", command=self.apply_patterns)
         self.search_button.grid(row=0, column=1, padx=(6, 0))
 
         # Preview Textbox
         self.txt_preview = ctk.CTkTextbox(right)
-        self.txt_preview.grid(row=4, column=0, sticky="nsew", padx=5, pady=(0, 5)) # Row 4
+        self.txt_preview.grid(
+            row=4, column=0, sticky="nsew", padx=5, pady=(0, 5))  # Row 4
         self.txt_preview.configure(state=tk.DISABLED)
         self.txt_preview.tag_config("selected_line", background="gray25")
         self.txt_preview.bind("<ButtonRelease-1>", self.on_preview_click)
@@ -328,7 +375,8 @@ class SubtitleStudioApp(ctk.CTk):
         pattern = self.ent_remove_pattern.get()
         replace = self.ent_remove_replace.get()
         case_sensitive = self.var_remove_ignore.get()
-        if not pattern: return
+        if not pattern:
+            return
 
         new_pattern = PatternItem(pattern, replace, not case_sensitive)
         self.custom_remove.append(new_pattern)
@@ -342,7 +390,8 @@ class SubtitleStudioApp(ctk.CTk):
         pattern = self.ent_replace_pattern.get()
         replace = self.ent_replace_replace.get()
         case_sensitive = self.var_replace_ignore.get()
-        if not pattern: return
+        if not pattern:
+            return
 
         new_pattern = PatternItem(pattern, replace, not case_sensitive)
         self.custom_replace.append(new_pattern)
@@ -358,23 +407,31 @@ class SubtitleStudioApp(ctk.CTk):
         lbl_text = f"[{pattern_item.pattern}] -> [{pattern_item.replace}] {'' if pattern_item.ignore_case else '(Aa)'}"
         lbl = ctk.CTkLabel(row, text=lbl_text)
         lbl.pack(side="left", fill="x", expand=False, padx=4)
+
         def on_delete():
-            try: target_list.remove(pattern_item)
-            except ValueError: pass
+            try:
+                target_list.remove(pattern_item)
+            except ValueError:
+                pass
             row.destroy()
             self.mark_as_unsaved()
+
         btnX = ctk.CTkButton(row, text="X", width=60, command=on_delete)
         btnX.pack(side="right", padx=4)
 
     def load_file(self, path: Optional[str] = None, bypass_save_check: bool = False):
         """Loads a subtitle .txt file."""
         if not path:
-            initial_dir = self.global_config.get('start_directory') or self._get_save_dir()
+            initial_dir = self.global_config.get(
+                'start_directory') or self._get_save_dir()
             path = filedialog.askopenfilename(title="Wybierz plik napisów",
-                                              filetypes=[("Text files", "*.txt"), ("All files", "*")],
+                                              filetypes=[
+                                                  ("Text files", "*.txt"), ("All files", "*")],
                                               initialdir=initial_dir)
-        if not path: return
-        if not bypass_save_check and not self._check_unsaved_changes(): return
+        if not path:
+            return
+        if not bypass_save_check and not self._check_unsaved_changes():
+            return
 
         self.loaded_path = Path(path)
         self.lbl_filename.configure(text=str(self.loaded_path.name))
@@ -387,7 +444,9 @@ class SubtitleStudioApp(ctk.CTk):
             self.has_unsaved_changes = False
             # Zaktualizuj ścieżkę w configu projektu, jeśli jest otwarty
             if self.current_project_path:
-                 self.set_project_config('subtitle_path', str(self.loaded_path)) # To wywoła zapis
+                # To wywoła zapis
+                self.set_project_config(
+                    'subtitle_path', str(self.loaded_path))
 
         except Exception as e:
             messagebox.showerror("Błąd", f"Nie udało się wczytać pliku:\n{e}")
@@ -395,14 +454,19 @@ class SubtitleStudioApp(ctk.CTk):
     def open_project(self, path: str | None = None):
         """Opens a .json project file."""
         if path is None:
-            if not self._check_unsaved_changes(): return
-            initial_dir = self.global_config.get('start_directory') or str(Path.cwd())
+            if not self._check_unsaved_changes():
+                return
+            initial_dir = self.global_config.get(
+                'start_directory') or str(Path.cwd())
             path = filedialog.askopenfilename(title="Otwórz projekt",
-                                              filetypes=[("JSON", "*.json"), ("All", "*")],
+                                              filetypes=[
+                                                  ("JSON", "*.json"), ("All", "*")],
                                               initialdir=initial_dir)
-        if not path: return
+        if not path:
+            return
         try:
-            with open(path, "r", encoding="utf-8") as f: cfg = json.load(f)
+            with open(path, "r", encoding="utf-8") as f:
+                cfg = json.load(f)
             self.current_project_path = Path(path)
             self.project_config = cfg
 
@@ -410,54 +474,62 @@ class SubtitleStudioApp(ctk.CTk):
             all_vars = self.builtin_remove_state + self.builtin_replace_state
             traces = {}
             for var in all_vars:
-                 if var.trace_info():
-                     trace_id = var.trace_info()[0][1]
-                     traces[var._name] = (var, trace_id) # Zapisz var i trace_id pod nazwą
-                     var.trace_remove("write", trace_id)
+                if var.trace_info():
+                    trace_id = var.trace_info()[0][1]
+                    traces[var._name] = (var, trace_id)  # Zapisz var i trace_id pod nazwą
+                    var.trace_remove("write", trace_id)
 
             for i, val in enumerate(cfg.get("builtin_remove_state", [])):
-                if i < len(self.builtin_remove_state): self.builtin_remove_state[i].set(bool(val))
+                if i < len(self.builtin_remove_state):
+                    self.builtin_remove_state[i].set(bool(val))
             for i, val in enumerate(cfg.get("builtin_replace_state", [])):
-                if i < len(self.builtin_replace_state): self.builtin_replace_state[i].set(bool(val))
+                if i < len(self.builtin_replace_state):
+                    self.builtin_replace_state[i].set(bool(val))
 
             for name, (var, trace_id) in traces.items():
                 var.trace_add("write", self.mark_as_unsaved)
             # ============================================
 
-            self.custom_remove = [PatternItem.from_json(x) for x in cfg.get("custom_remove", [])]
-            self.custom_replace = [PatternItem.from_json(x) for x in cfg.get("custom_replace", [])]
+            self.custom_remove = [PatternItem.from_json(
+                x) for x in cfg.get("custom_remove", [])]
+            self.custom_replace = [PatternItem.from_json(
+                x) for x in cfg.get("custom_replace", [])]
             self._refresh_custom_lists()
 
             subtitle_path = cfg.get("subtitle_path")
             if subtitle_path and Path(subtitle_path).exists():
                 self.load_file(subtitle_path, bypass_save_check=True)
             else:
-                 self.original_lines = []
-                 self.apply_patterns()
-                 self.lbl_filename.configure(text="Brak wczytanego pliku")
+                self.original_lines = []
+                self.apply_patterns()
+                self.lbl_filename.configure(text="Brak wczytanego pliku")
 
             audio_path_str = cfg.get("audio_path")
             self.audio_dir = Path(audio_path_str) if audio_path_str else None
 
-            self.set_status(f"Wczytano projekt: {self.current_project_path.name}")
+            self.set_status(
+                f"Wczytano projekt: {self.current_project_path.name}")
             self.save_app_setting('last_project', path)
-            self.has_unsaved_changes = False # Świeżo załadowany
+            self.has_unsaved_changes = False  # Świeżo załadowany
 
         except Exception as e:
-            messagebox.showerror("Błąd wczytywania projektu", f"Nie udało się wczytać konfiguracji:\n{e}")
+            messagebox.showerror(
+                "Błąd wczytywania projektu", f"Nie udało się wczytać konfiguracji:\n{e}")
             self.current_project_path = None
             self.project_config = {}
             self.has_unsaved_changes = False
 
     def close_project(self):
         """Closes the current project and restarts."""
-        if not self._check_unsaved_changes(): return
+        if not self._check_unsaved_changes():
+            return
         try:
             self.save_app_setting('last_project', None)
             self._reset_app_state()
             os.execl(sys.executable, sys.executable, *sys.argv)
         except Exception as e:
-            messagebox.showerror("Błąd restartu", f"Nie udało się zrestartować aplikacji:\n{e}")
+            messagebox.showerror(
+                "Błąd restartu", f"Nie udało się zrestartować aplikacji:\n{e}")
 
     def _reset_app_state(self):
         """Resets the application state to default."""
@@ -475,32 +547,38 @@ class SubtitleStudioApp(ctk.CTk):
         self.apply_patterns()
         self.lbl_filename.configure(text="Brak wczytanego pliku")
         # Zresetuj wbudowane checkboxy (opcjonalne)
-        for var in self.builtin_remove_state + self.builtin_replace_state: var.set(True)
-
+        for var in self.builtin_remove_state + self.builtin_replace_state:
+            var.set(True)
 
     def set_project_config(self, param, value):
         """Saves a single key-value pair to the current project config."""
-        if self.project_config is None: self.project_config = {}
-        if self.project_config.get(param) != value: # Zapisuj tylko jeśli jest zmiana
+        if self.project_config is None:
+            self.project_config = {}
+        if self.project_config.get(param) != value:  # Zapisuj tylko jeśli jest zmiana
             self.project_config[param] = value
             self.mark_as_unsaved()
-            if self.current_project_path: self.save_project()
+            if self.current_project_path:
+                self.save_project()
 
     def save_project(self, cfg: dict | None = None):
         """Saves the current config to the loaded project file."""
-        if not self.current_project_path: return self.save_project_as()
+        if not self.current_project_path:
+            return self.save_project_as()
 
         final_cfg = self._gather_project_config()
-        if cfg: final_cfg.update(cfg)
+        if cfg:
+            final_cfg.update(cfg)
         self.project_config = final_cfg
 
         try:
             with open(self.current_project_path, "w", encoding="utf-8") as f:
                 json.dump(final_cfg, f, indent=2, ensure_ascii=False)
-            self.set_status(f"Zapisano projekt: {self.current_project_path.name}")
+            self.set_status(
+                f"Zapisano projekt: {self.current_project_path.name}")
             self.has_unsaved_changes = False
         except Exception as e:
-            messagebox.showerror("Błąd", f"Nie udało się zapisać konfiguracji:\n{e}")
+            messagebox.showerror(
+                "Błąd", f"Nie udało się zapisać konfiguracji:\n{e}")
 
     def save_project_as(self):
         """Saves the current configuration to a new .json project file."""
@@ -525,7 +603,8 @@ class SubtitleStudioApp(ctk.CTk):
             "custom_replace": [p.to_json() for p in self.custom_replace],
             "subtitle_path": str(self.loaded_path) if self.loaded_path else None,
             "audio_path": str(self.audio_dir.absolute()) if self.audio_dir else None,
-            "active_tts_model": self.project_config.get('active_tts_model', 'XTTS' if self.torch_installed else "ElevenLabs"),
+            "active_tts_model": self.project_config.get('active_tts_model',
+                                                        'XTTS' if self.torch_installed else "ElevenLabs"),
             "base_audio_speed": self.project_config.get('base_audio_speed', 1.1)
         })
         return current_cfg
@@ -534,14 +613,16 @@ class SubtitleStudioApp(ctk.CTk):
         """Loads the global app config."""
         if APP_CONFIG.exists():
             try:
-                with open(APP_CONFIG, "r", encoding="utf-8") as f: self.global_config = json.load(f)
+                with open(APP_CONFIG, "r", encoding="utf-8") as f:
+                    self.global_config = json.load(f)
                 last_proj = self.global_config.get('last_project')
-                if last_proj and Path(last_proj).exists(): # Sprawdź czy plik projektu nadal istnieje
-                     self.open_project(last_proj)
+                if last_proj and Path(last_proj).exists():  # Sprawdź czy plik projektu nadal istnieje
+                    self.open_project(last_proj)
                 else:
                     # Jeśli nie istnieje, usuń wpis
-                    if last_proj: self.save_app_setting('last_project', None)
-                    self._reset_app_state() # Zacznij od czystego stanu
+                    if last_proj:
+                        self.save_app_setting('last_project', None)
+                    self._reset_app_state()  # Zacznij od czystego stanu
 
             except Exception as e:
                 print(f"Błąd wczytywania konfiguracji aplikacji: {e}")
@@ -571,37 +652,36 @@ class SubtitleStudioApp(ctk.CTk):
                     for child in widget.winfo_children():
                         child.destroy()
                     widget.destroy()
-        self.custom_remove_frame = self.build_scroll_list_frame(self.center_frame, 1)
+        self.custom_remove_frame = self.build_scroll_list_frame(
+            self.center_frame, 1)
         for p in self.custom_remove:
             self.add_row(self.custom_remove_frame, p, self.custom_remove)
 
-        self.custom_replace_frame = self.build_scroll_list_frame(self.center_frame, 4)  # Poprawiony row
+        self.custom_replace_frame = self.build_scroll_list_frame(
+            self.center_frame, 4)  # Poprawiony row
         for p in self.custom_replace:
             self.add_row(self.custom_replace_frame, p, self.custom_replace)
 
     def _gather_active_patterns(self) -> tuple[List[PatternItem], List[PatternItem]]:
         """Collects all active built-in and custom patterns."""
         remove_patterns = list(self.custom_remove)  # Kopiuj listę
-        remove_patterns.extend(p for i, p in enumerate(self.builtin_remove) if self.builtin_remove_state[i].get())
+        remove_patterns.extend(
+            p for i, p in enumerate(self.builtin_remove) if self.builtin_remove_state[i].get())
 
         replace_patterns = list(self.custom_replace)  # Kopiuj listę
-        replace_patterns.extend(p for i, p in enumerate(self.builtin_replace) if self.builtin_replace_state[i].get())
+        replace_patterns.extend(
+            p for i, p in enumerate(self.builtin_replace) if self.builtin_replace_state[i].get())
 
         return remove_patterns, replace_patterns
 
     def apply_processing(self):
         """Applies all active patterns to the loaded subtitles."""
         if not self.original_lines:
-            messagebox.showwarning('Brak pliku', 'Najpierw wczytaj plik z napisami.')
+            messagebox.showwarning(
+                'Brak pliku', 'Najpierw wczytaj plik z napisami.')
             return
 
         self.apply_patterns()  # To zaktualizuje processed_clean i processed_replace
-
-        # Pokazanie przycisków pobierania
-        if not self.btn_download_clean.winfo_ismapped():  # Sprawdź czy już są widoczne
-            self.btn_download_clean.grid(row=0, column=0, sticky="ew", padx=(0, 5))
-        if not self.btn_download_replace.winfo_ismapped():
-            self.btn_download_replace.grid(row=0, column=1, sticky="ew", padx=(5, 0))
 
         self.set_status('Przetworzono napisy — gotowe do pobrania')
         self.mark_as_unsaved()
@@ -609,23 +689,29 @@ class SubtitleStudioApp(ctk.CTk):
     def download_clean(self):
         """Saves the 'clean' (for Game Reader) subtitles to a file."""
         if not self.processed_clean:
-            messagebox.showwarning('Brak danych', 'Brak oczyszczonych linii. Najpierw przetwórz plik.')
+            messagebox.showwarning(
+                'Brak danych', 'Brak oczyszczonych linii. Najpierw przetwórz plik.', parent=self)
             return
         path = filedialog.asksaveasfilename(title='Zapisz oczyszczone napisy', defaultextension='.txt',
-                                            filetypes=[('Text files', '*.txt')],
+                                            filetypes=[
+                                                ('Text files', '*.txt')],
                                             initialdir=self._get_save_dir())
-        if not path: return
+        if not path:
+            return
         self._save_lines_to_file(path, self.processed_clean, "oczyszczone")
 
     def download_replace(self):
         """Saves the 'replaced' (for TTS) subtitles to a file."""
         if not self.processed_replace:
-            messagebox.showwarning('Brak danych', 'Brak zamienionych linii. Najpierw przetwórz plik.')
+            messagebox.showwarning(
+                'Brak danych', 'Brak zamienionych linii. Najpierw przetwórz plik.', parent=self)
             return
         path = filedialog.asksaveasfilename(title='Zapisz napisy z podmianami', defaultextension='.txt',
-                                            filetypes=[('Text files', '*.txt')],
+                                            filetypes=[
+                                                ('Text files', '*.txt')],
                                             initialdir=self._get_save_dir())
-        if not path: return
+        if not path:
+            return
         self._save_lines_to_file(path, self.processed_replace, "z podmianami")
 
     def _get_save_dir(self) -> str | None:
@@ -639,27 +725,33 @@ class SubtitleStudioApp(ctk.CTk):
         try:
             with open(path, 'w', encoding='utf-8') as f:
                 f.write('\n'.join(lines))
-            messagebox.showinfo('Gotowe', f'Zapisano napisy {description}:\n{path}')
+            messagebox.showinfo('Gotowe', f'Zapisano napisy {description}:\n{path}', parent=self)
             self.set_status(f'Zapisano napisy {description}: {Path(path).name}')
         except Exception as e:
-            messagebox.showerror('Błąd zapisu', str(e))
+            messagebox.showerror('Błąd zapisu', str(e), parent=self)
 
     def apply_patterns(self):
         """Recalculates processed lines and updates preview."""
-        self.lbl_count_orig.configure(text=f'Linie org.: {len(self.original_lines)}')
+        self.lbl_count_orig.configure(
+            text=f'Linie org.: {len(self.original_lines)}')
         rem_patterns, rep_patterns = self._gather_active_patterns()
 
         try:
-            self.processed_clean = apply_remove_patterns(self.original_lines, rem_patterns)
-            self.processed_replace = apply_replace_patterns(self.processed_clean, rep_patterns)
+            self.processed_clean = apply_remove_patterns(
+                self.original_lines, rem_patterns)
+            self.processed_replace = apply_replace_patterns(
+                self.processed_clean, rep_patterns)
         except re.error as e:
-            messagebox.showerror('Błąd regex', f'Błąd w wyrażeniu regularnym:\n{e}')
+            messagebox.showerror(
+                'Błąd regex', f'Błąd w wyrażeniu regularnym:\n{e}')
             return
         except Exception as e:
-            messagebox.showerror('Błąd przetwarzania', f'Wystąpił nieoczekiwany błąd podczas stosowania wzorców:\n{e}')
+            messagebox.showerror(
+                'Błąd przetwarzania', f'Wystąpił nieoczekiwany błąd podczas stosowania wzorców:\n{e}')
             return
 
-        self.lbl_count_after.configure(text=f'Linie po: {len(self.processed_clean)}')
+        self.lbl_count_after.configure(
+            text=f'Linie po: {len(self.processed_clean)}')
         self.set_preview(self.processed_replace)
         self.update_audio_buttons_state()
 
@@ -690,9 +782,12 @@ class SubtitleStudioApp(ctk.CTk):
 
     def open_audio_deleter(self):
         """Opens Batch Audio Deleter window."""
-        if not self.processed_replace: return messagebox.showwarning("Brak danych", "Najpierw przetwórz.", parent=self)
-        if not self.audio_dir: return messagebox.showwarning("Brak katalogu", "Ustaw katalog audio.", parent=self)
-        win = AudioDeleterWindow(self, self.processed_replace, str(self.audio_dir))
+        if not self.processed_replace:
+            return messagebox.showwarning("Brak danych", "Najpierw przetwórz.", parent=self)
+        if not self.audio_dir:
+            return messagebox.showwarning("Brak katalogu", "Ustaw katalog audio.", parent=self)
+        win = AudioDeleterWindow(
+            self, self.processed_replace, str(self.audio_dir))
         win.grab_set()
 
     # === ZMIANA: Rozdzielone funkcje ===
@@ -704,20 +799,134 @@ class SubtitleStudioApp(ctk.CTk):
     def open_project_settings(self):
         """Opens the Project Settings window."""
         if not self.current_project_path:
-             return messagebox.showwarning("Brak projektu", "Otwórz lub zapisz projekt.", parent=self)
+            return messagebox.showwarning("Brak projektu", "Otwórz lub zapisz projekt.", parent=self)
         win = SettingsWindow(self, self.torch_installed, mode='project')
         win.grab_set()
-    # ==================================
+
+    def generate_game_reader_preset(self):
+        """
+        Generates a folder structure and config file (clean.json)
+        compatible with the "Game Reader" application.
+        """
+        if not self.processed_clean:
+            messagebox.showwarning('Brak danych',
+                                   'Brak oczyszczonych napisów (dla Game Reader). Najpierw przetwórz plik.',
+                                   parent=self)
+            return
+
+        if not self.audio_dir or not (self.audio_dir / "ready").is_dir():
+            messagebox.showwarning('Brak audio',
+                                   'Katalog audio z podkatalogiem "ready" nie jest ustawiony lub nie istnieje.',
+                                   parent=self)
+            return
+
+        # 1. Get destination folder
+        initial_dir = self._get_save_dir()
+        dest_folder_path = filedialog.askdirectory(
+            title="Wybierz folder docelowy dla presetu",
+            initialdir=initial_dir,
+            parent=self
+        )
+        if not dest_folder_path:
+            return
+
+        dest_folder = Path(dest_folder_path)
+
+        # 2. Ask to copy audio
+        copy_audio = messagebox.askyesno(
+            "Kopiowanie audio",
+            "Czy skopiować przetworzone pliki audio (z /ready) do nowego folderu presetu (do podkatalogu /audio)?\n\n"
+            "Wybierz 'Tak', aby utworzyć w pełni samodzielny preset.\n"
+            "Wybierz 'Nie', aby preset odwoływał się do bieżącego katalogu /ready.",
+            parent=self
+        )
+
+        # 3. Load template clean.json (z pliku dostarczonego przez użytkownika)
+        preset_template = {
+            "monitor": {"top": 900, "left": 375, "width": 1170, "height": 120},
+            "resolution": "1920x1080",
+            "CENTER_LINE_MARGIN": 100,
+            "CENTER_LINE_2_START": 1,
+            "CENTER_LINE_3_START_RATIO": 0.3,
+            "RESOLUTION_DOWNSCALE": 0.45,
+            "CAPTURE_INTERVAL": 0.5,
+            "MIN_HEIGHT": 10,
+            "MAX_HEIGHT": 100,
+            "ENABLE_REMOVE_CHARACTER_NAME": False,
+            "ENABLE_SCREENSHOTS": False,
+            "USE_CENTER_LINE_1": False,
+            "USE_CENTER_LINE_2": False,
+            "USE_CENTER_LINE_3": False,
+            "audio_dir": "",  # To be filled
+            "text_file_path": "",  # To be filled
+            "names_file_path": "",
+            "screenshot_dir": "",
+            "key_bindings": {
+                "toggle_on": "home", "toggle_off": "end", "volume_up": "page_up",
+                "volume_down": "page_down", "switch_monitor_prev": "alt+1",
+                "switch_monitor_next": "alt+2", "test_sound": "insert",
+                "open_settings": "alt+`", "interrupt_audio": "delete"
+            },
+            "monitor2_enabled": False,
+            "monitor2_top": 100, "monitor2_left": 375, "monitor2_width": 1170, "monitor2_height": 120
+        }
+
+        # 4. Define paths
+        text_filename = "subtitles.txt"
+        text_file_dest_path = dest_folder / text_filename
+        json_file_dest_path = dest_folder / "preset.json"
+        source_audio_path = self.audio_dir / "ready"
+
+        try:
+            # 5. Save text file (bez pokazywania komunikatu)
+            with open(text_file_dest_path, 'w', encoding='utf-8') as f:
+                f.write('\n'.join(self.processed_clean))
+            preset_template["text_file_path"] = text_filename  # Relative path
+
+            # 6. Handle audio
+            if copy_audio:
+                audio_dest_folder = dest_folder / "audio"
+
+                # Ensure target dir exists and is empty if it exists
+                if audio_dest_folder.exists():
+                    print(f"Usuwam istniejący folder: {audio_dest_folder}")
+                    shutil.rmtree(audio_dest_folder)
+
+                # Copy
+                print(f"Kopiuję {source_audio_path} do {audio_dest_folder}")
+                shutil.copytree(str(source_audio_path), str(audio_dest_folder))
+
+                preset_template["audio_dir"] = "audio"  # Relative path
+            else:
+                # Use absolute path to existing /ready dir
+                preset_template["audio_dir"] = str(source_audio_path.absolute())
+
+            # 7. Save clean.json
+            with open(json_file_dest_path, "w", encoding="utf-8") as f:
+                json.dump(preset_template, f, indent=4, ensure_ascii=False)
+
+            messagebox.showinfo(
+                "Preset wygenerowany",
+                f"Pomyślnie wygenerowano preset dla Game Reader w folderze:\n{dest_folder_path}",
+                parent=self
+            )
+
+        except Exception as e:
+            messagebox.showerror("Błąd generowania presetu", f"Wystąpił błąd:\n{e}", parent=self)
+
+    # *** Koniec nowej metody ***
 
     def import_patterns_from_csv(self):
         """Imports 'replace' patterns from CSV."""
-        initial_dir = self.global_config.get('start_directory') or self._get_save_dir()
+        initial_dir = self.global_config.get(
+            'start_directory') or self._get_save_dir()
         file_path = filedialog.askopenfilename(
             title="Wybierz plik CSV",
             filetypes=[("CSV files", "*.csv"), ("All files", "*.*")],
             initialdir=initial_dir
         )
-        if not file_path: return
+        if not file_path:
+            return
 
         imported_count = 0
         try:
@@ -725,8 +934,11 @@ class SubtitleStudioApp(ctk.CTk):
                 reader = csv.reader(f)
                 for i, row in enumerate(reader):
                     if not row or len(row) < 2:
-                        print(f"Pominięto wiersz {i + 1}: za mało kolumn ({len(row)})")
+                        print(
+                            f"Pominięto wiersz {i + 1}: za mało kolumn ({len(row)})")
                         continue
+
+                    # .strip() jest nadal OK, csv.reader zajmie się cudzysłowami
                     pattern = row[0].strip()
                     if not pattern:
                         print(f"Pominięto wiersz {i + 1}: pusty wzorzec")
@@ -742,23 +954,29 @@ class SubtitleStudioApp(ctk.CTk):
 
                     new_pattern = PatternItem(pattern, replace, ignore_case)
                     self.custom_replace.append(new_pattern)
-                    self.add_row(self.custom_replace_frame, new_pattern, self.custom_replace)
+                    self.add_row(self.custom_replace_frame,
+                                 new_pattern, self.custom_replace)
                     imported_count += 1
 
             if imported_count > 0:
                 self.mark_as_unsaved()
-                messagebox.showinfo("Import zakończony", f"Zaimportowano {imported_count} wzorców.")
+                messagebox.showinfo(
+                    "Import zakończony", f"Zaimportowano {imported_count} wzorców.")
             else:
-                messagebox.showwarning("Import zakończony", "Nie zaimportowano żadnych poprawnych wzorców.")
+                messagebox.showwarning(
+                    "Import zakończony", "Nie zaimportowano żadnych poprawnych wzorców.")
         except Exception as e:
-            messagebox.showerror("Błąd importu", f"Nie udało się zaimportować pliku:\n{e}")
+            messagebox.showerror(
+                "Błąd importu", f"Nie udało się zaimportować pliku:\n{e}")
 
     def save_global_config(self, new_config_data: dict):
         """Saves data to the global .subtitle_studio_config.json file."""
         self.global_config.update(new_config_data)
         try:
-            with open(APP_CONFIG.absolute(), "w", encoding="utf-8") as f: json.dump(self.global_config, f, indent=2)
-        except Exception as e: messagebox.showerror("Błąd zapisu config", f"Błąd: {e}")
+            with open(APP_CONFIG.absolute(), "w", encoding="utf-8") as f:
+                json.dump(self.global_config, f, indent=2)
+        except Exception as e:
+            messagebox.showerror("Błąd zapisu config", f"Błąd: {e}")
 
     def save_app_setting(self, param, value):
         """Saves a single key-value to global config."""
@@ -773,7 +991,8 @@ class SubtitleStudioApp(ctk.CTk):
         """
         if self.has_unsaved_changes and self.current_project_path:
             msg = "Masz niezapisane zmiany w projekcie. Czy chcesz je zapisać?"
-            result = messagebox.askyesnocancel("Niezapisane zmiany", msg, parent=self)
+            result = messagebox.askyesnocancel(
+                "Niezapisane zmiany", msg, parent=self)
 
             if result is True:
                 self.save_project()
@@ -804,7 +1023,8 @@ class SubtitleStudioApp(ctk.CTk):
             # Musimy zmapować ten widoczny indeks na oryginalny indeks z `processed_replace`
             # Najpierw pobierz WSZYSTKIE linie z textboxa
             all_visible_lines = self.txt_preview.get("1.0", tk.END).splitlines()
-            if visible_line_index >= len(all_visible_lines): return  # Kliknięcie poza tekstem
+            if visible_line_index >= len(all_visible_lines):
+                return  # Kliknięcie poza tekstem
 
             # Pobierz treść klikniętej linii (np. "005 | Jakiś tekst")
             clicked_line_content = all_visible_lines[visible_line_index]
@@ -873,7 +1093,8 @@ class SubtitleStudioApp(ctk.CTk):
 
     def _find_audio_files(self, identifier: str) -> List[Tuple[Path, bool]]:
         """Finds audio files for a given identifier."""
-        if not self.audio_dir: return []
+        if not self.audio_dir:
+            return []
         # Uwzględniamy mp3 z elevenlabs
         candidates = [
             (self.audio_dir / f"output1 ({identifier}).wav", False),
@@ -886,54 +1107,65 @@ class SubtitleStudioApp(ctk.CTk):
 
     def stop_audio(self):
         """Stops and unloads any currently playing audio file."""
-        if not PYGAME_AVAILABLE: return
+        if not PYGAME_AVAILABLE:
+            return
         try:
             pygame.mixer.music.stop()
             pygame.mixer.music.unload()
         except Exception:
             pass
 
-    def play_selected_audio(self, event = None):
+    def play_selected_audio(self, event=None):
         """Plays the first available audio file for the selected line."""
-        if not PYGAME_AVAILABLE: return
+        if not PYGAME_AVAILABLE:
+            return
         identifier = self._get_selected_identifier()
-        if not identifier or not self.audio_dir: return
+        if not identifier or not self.audio_dir:
+            return
 
         files = self._find_audio_files(identifier)
         if files:
             selected_name = self.audio_select_var.get()
-            file_to_play = next((f for f, _ in files if f.name == selected_name), files[0][0])
+            file_to_play = next(
+                (f for f, _ in files if f.name == selected_name), files[0][0])
             self.stop_audio()  # Zatrzymaj poprzedni
             try:
                 print(f"Odtwarzam: {file_to_play}")
                 pygame.mixer.music.load(str(file_to_play))
                 pygame.mixer.music.play()
             except Exception as e:
-                messagebox.showerror("Błąd odtwarzania", f"Nie udało się odtworzyć pliku:\n{e}", parent=self)
+                messagebox.showerror(
+                    "Błąd odtwarzania", f"Nie udało się odtworzyć pliku:\n{e}", parent=self)
         else:
-            messagebox.showinfo("Brak pliku", "Brak plików audio dla tej linii.", parent=self)
+            messagebox.showinfo(
+                "Brak pliku", "Brak plików audio dla tej linii.", parent=self)
 
     def delete_selected_audio(self):
         """Deletes the *first found* audio file for the selected line."""
         identifier = self._get_selected_identifier()
-        if not identifier or not self.audio_dir: return
+        if not identifier or not self.audio_dir:
+            return
 
         files = self._find_audio_files(identifier)
         if not files:
-            messagebox.showinfo("Brak plików", "Brak plików audio do usunięcia dla tej linii.", parent=self)
+            messagebox.showinfo(
+                "Brak plików", "Brak plików audio do usunięcia dla tej linii.", parent=self)
             return
         selected_name = self.audio_select_var.get()
-        file_to_delete = next((f for f, _ in files if f.name == selected_name), files[0][0])
+        file_to_delete = next(
+            (f for f, _ in files if f.name == selected_name), files[0][0])
         self._delete_single_file_with_check(file_to_delete)
 
     def delete_all_selected_audio(self):
         """Deletes *all* found audio files for the selected line."""
         identifier = self._get_selected_identifier()
-        if not identifier or not self.audio_dir: return
+        if not identifier or not self.audio_dir:
+            return
 
         files = self._find_audio_files(identifier)
         if not files:
-            messagebox.showinfo("Brak plików", "Brak plików audio do usunięcia dla tej linii.", parent=self)
+            messagebox.showinfo(
+                "Brak plików", "Brak plików audio do usunięcia dla tej linii.", parent=self)
             return
 
         # Sprawdź, czy którykolwiek plik jest odtwarzany
@@ -999,17 +1231,22 @@ class SubtitleStudioApp(ctk.CTk):
                 os.remove(file_path)
                 self.update_audio_buttons_state()  # Odśwież stan przycisków
             except Exception as e:
-                messagebox.showerror("Błąd", f"Nie udało się usunąć pliku:\n{e}", parent=self)
+                messagebox.showerror(
+                    "Błąd", f"Nie udało się usunąć pliku:\n{e}", parent=self)
 
     def choose_audio_dir(self):
         """Opens dialog to choose audio directory."""
-        init_dir = self.global_config.get('start_directory') or (str(self.audio_dir) if self.audio_dir else None)
-        path = filedialog.askdirectory(title="Wybierz katalog audio", initialdir=init_dir, parent=self)
+        init_dir = self.global_config.get('start_directory') or (
+            str(self.audio_dir) if self.audio_dir else None)
+        path = filedialog.askdirectory(
+            title="Wybierz katalog audio", initialdir=init_dir, parent=self)
         if path:
             new_dir = Path(path)
             if self.audio_dir != new_dir:
                 self.audio_dir = new_dir
-                if self.current_project_path: self.set_project_config('audio_path', str(new_dir.absolute()))
+                if self.current_project_path:
+                    self.set_project_config(
+                        'audio_path', str(new_dir.absolute()))
                 self.update_audio_buttons_state()
 
     # ===============================
@@ -1017,9 +1254,12 @@ class SubtitleStudioApp(ctk.CTk):
     # ===============================
     def check_queue(self):
         """Periodically checks queue for GUI updates."""
-        try: task = self.queue.get_nowait()
-        except queue.Empty: pass
-        else: task()
+        try:
+            task = self.queue.get_nowait()
+        except queue.Empty:
+            pass
+        else:
+            task()
         self.after(100, self.check_queue)
 
     def _get_active_tts_model_name(self) -> str | None:
@@ -1034,7 +1274,8 @@ class SubtitleStudioApp(ctk.CTk):
         """
         self.active_model_name = self._get_active_tts_model_name()
         if not self.active_model_name:
-            raise ValueError("Nie wybrano aktywnego modelu TTS w ustawieniach projektu.")
+            raise ValueError(
+                "Nie wybrano aktywnego modelu TTS w ustawieniach projektu.")
 
         try:
             # Wyczyść stary model/sesję
@@ -1042,32 +1283,41 @@ class SubtitleStudioApp(ctk.CTk):
 
             if self.active_model_name == 'XTTS':
                 # --- Logika XTTS API ---
-                api_url = self.global_config.get('xtts_api_url', 'http://127.0.0.1:8001')
+                api_url = self.global_config.get(
+                    'xtts_api_url', 'http://127.0.0.1:8001')
                 if not api_url:
-                    raise ValueError("URL dla XTTS API nie jest ustawione w Ustawieniach Globalnych.")
+                    raise ValueError(
+                        "URL dla XTTS API nie jest ustawione w Ustawieniach Globalnych.")
                 # Tworzymy sesję requests dla potencjalnych optymalizacji połączenia
                 session = requests.Session()
                 session.headers.update({'Content-Type': 'application/json'})
                 # Zapisujemy URL i sesję do użycia później
-                self.tts_model = {'url': api_url.rstrip('/') + '/xtts/tts', 'session': session}
-                print(f"Przygotowano klienta dla XTTS API: {self.tts_model['url']}")
+                self.tts_model = {
+                    'url': api_url.rstrip('/') + '/xtts/tts', 'session': session}
+                print(
+                    f"Przygotowano klienta dla XTTS API: {self.tts_model['url']}")
 
             elif self.active_model_name == 'ElevenLabs':
                 api_key = self.global_config.get('elevenlabs_api_key')
                 voice_id = self.global_config.get('elevenlabs_voice_id')
                 if not api_key or not voice_id:
-                    raise ValueError("Klucz API lub Voice ID dla ElevenLabs nie są ustawione w Ustawieniach.")
-                self.tts_model = ElevenLabsTTS(api_key=api_key, voice_id=voice_id)
+                    raise ValueError(
+                        "Klucz API lub Voice ID dla ElevenLabs nie są ustawione w Ustawieniach.")
+                self.tts_model = ElevenLabsTTS(
+                    api_key=api_key, voice_id=voice_id)
 
             elif self.active_model_name == 'Google Cloud TTS':
                 creds_path = self.global_config.get('google_credentials_path')
                 voice_name = self.global_config.get('google_voice_name')
                 if not creds_path or not Path(creds_path).exists():
-                    raise ValueError("Ścieżka do credentials .json dla Google TTS jest nieprawidłowa lub nie istnieje.")
-                self.tts_model = GoogleCloudTTS(credentials_path=creds_path, voice_name=voice_name)
+                    raise ValueError(
+                        "Ścieżka do credentials .json dla Google TTS jest nieprawidłowa lub nie istnieje.")
+                self.tts_model = GoogleCloudTTS(
+                    credentials_path=creds_path, voice_name=voice_name)
 
             else:
-                raise ValueError(f"Nieznany model TTS: {self.active_model_name}")
+                raise ValueError(
+                    f"Nieznany model TTS: {self.active_model_name}")
 
         except Exception as e:
             self.tts_model = None  # Resetuj w razie błędu
@@ -1077,14 +1327,14 @@ class SubtitleStudioApp(ctk.CTk):
                 f"Nie udało się załadować/przygotować modelu:\n{e}",
                 parent=self
             ))
-            # ==========================================
-            # Zniszcz okno postępu, jeśli było otwarte (np. w generate_all)
             if hasattr(self, 'progress_window') and self.progress_window:
                 self.queue.put(lambda: self.progress_window.destroy())
 
     def _run_converter(self, is_single_file=False, single_file_path: Optional[Path] = None):
         """Initializes and runs the AudioConverter."""
-        from audio.audio_converter import AudioConverter  # Import wewnątrz, aby uniknąć problemów z circular import
+        # Import wewnątrz, aby uniknąć problemów z circular import
+        # 4. Konwertuj audio (wszystkie na raz, które istnieją jako wav/mp3 w głównym katalogu)
+        from audio.audio_converter import AudioConverter
 
         if not self.audio_dir:
             print("Błąd: Katalog audio nie jest ustawiony do konwersji.")
@@ -1096,16 +1346,30 @@ class SubtitleStudioApp(ctk.CTk):
             base_speed = 1.1
 
         filter_settings = self.global_config.get('ffmpeg_filters', {})
-        converter = AudioConverter(base_speed=base_speed, filter_settings=filter_settings)
+        converter = AudioConverter(
+            base_speed=base_speed, filter_settings=filter_settings)
         output_dir = self.audio_dir / "ready"
         os.makedirs(output_dir, exist_ok=True)
 
+        # *** ZMIANA: Pobierz liczbę wątków ***
+        try:
+            # Użyj os.cpu_count() jako domyślnego, jeśli klucz nie istnieje
+            default_workers = max(1, os.cpu_count() // 2 if os.cpu_count() else 4)
+            max_workers = int(self.global_config.get('conversion_workers', default_workers))
+        except (ValueError, TypeError):
+            default_workers = max(1, os.cpu_count() // 2 if os.cpu_count() else 4)
+            max_workers = default_workers
+        # *** Koniec zmiany ***
+
         try:
             if is_single_file and single_file_path and single_file_path.exists():
-                output_file = converter.build_output_file_path(single_file_path.name, str(output_dir))
+                output_file = converter.build_output_file_path(
+                    single_file_path.name, str(output_dir))
                 converter.parse_ogg(str(single_file_path), output_file)
             elif not is_single_file:
-                converter.convert_dir(str(self.audio_dir), str(output_dir))
+                # *** ZMIANA: Przekaż max_workers ***
+                converter.convert_dir(
+                    str(self.audio_dir), str(output_dir), max_workers=max_workers)
         except Exception as conv_e:
             print(f"Błąd podczas konwersji audio: {conv_e}")
             self.queue.put(
@@ -1116,10 +1380,12 @@ class SubtitleStudioApp(ctk.CTk):
         """Starts generation for the currently selected line."""
         identifier = self._get_selected_identifier()
         if identifier is None:
-            messagebox.showwarning("Brak zaznaczenia", "Najpierw wybierz linię z podglądu.", parent=self)
+            messagebox.showwarning(
+                "Brak zaznaczenia", "Najpierw wybierz linię z podglądu.", parent=self)
             return
         if not self.audio_dir:
-            messagebox.showwarning("Brak katalogu", "Najpierw wybierz katalog audio w menu 'Dialogi'.", parent=self)
+            messagebox.showwarning(
+                "Brak katalogu", "Najpierw wybierz katalog audio w menu 'Dialogi'.", parent=self)
             return
 
         self.start_generate_single(identifier)
@@ -1131,24 +1397,31 @@ class SubtitleStudioApp(ctk.CTk):
             return
 
         self.cancel_generation_event.clear()
-        self.set_status(f"Rozpoczynanie generowania dla linii {identifier}...")
-        threading.Thread(target=self._task_generate_single, args=(identifier,), daemon=True).start()
+        self.set_status(
+            f"Rozpoczynanie generowania dla linii {identifier}...")
+        threading.Thread(target=self._task_generate_single,
+                         args=(identifier,), daemon=True).start()
 
     def _task_generate_single(self, identifier: str):
         """Worker thread task for generating a single file."""
         output_path = None  # Zdefiniuj przed try
         try:
             # 1. Załaduj model (lub przygotuj klienta API)
-            self.queue.put(lambda: self.set_status(f"Ładowanie modelu {self._get_active_tts_model_name()}..."))
+            self.queue.put(
+                lambda: self.set_status(f"Ładowanie modelu {self._get_active_tts_model_name()}..."))
             self._load_tts_model()
-            if self.tts_model is None: return  # Błąd zgłoszony w _load_tts_model
-            if self.cancel_generation_event.is_set(): raise InterruptedError("Anulowano")
+            if self.tts_model is None:
+                return  # Błąd zgłoszony w _load_tts_model
+            if self.cancel_generation_event.is_set():
+                raise InterruptedError("Anulowano")
 
             # 2. Generuj TTS
-            self.queue.put(lambda: self.set_status(f"Generowanie głosu dla linii {identifier}..."))
+            self.queue.put(
+                lambda: self.set_status(f"Generowanie głosu dla linii {identifier}..."))
             line_index = int(identifier) - 1
             text = self.processed_replace[line_index]
-            output_path = self.audio_dir / f"output1 ({identifier}).wav"  # Zawsze .wav jako cel pośredni
+            # Zawsze .wav jako cel pośredni
+            output_path = self.audio_dir / f"output1 ({identifier}).wav"
 
             # --- Wywołanie TTS (API lub lokalnie) ---
             if self.active_model_name == 'XTTS':
@@ -1158,37 +1431,48 @@ class SubtitleStudioApp(ctk.CTk):
             else:
                 raise TypeError("Niespodziewany typ modelu TTS.")
 
-            if self.cancel_generation_event.is_set(): raise InterruptedError("Anulowano")
+            if self.cancel_generation_event.is_set():
+                raise InterruptedError("Anulowano")
 
             # 3. Konwertuj audio
-            self.queue.put(lambda: self.set_status(f"Konwertowanie audio dla linii {identifier}..."))
-            self._run_converter(is_single_file=True, single_file_path=output_path)
+            self.queue.put(
+                lambda: self.set_status(f"Konwertowanie audio dla linii {identifier}..."))
+            self._run_converter(is_single_file=True,
+                                single_file_path=output_path)
 
             # 4. Odśwież GUI (status)
-            self.queue.put(lambda: self.set_status(f"Zakończono generowanie dla linii {identifier}."))
+            self.queue.put(
+                lambda: self.set_status(f"Zakończono generowanie dla linii {identifier}."))
             # Odświeżenie przycisków nastąpi, jeśli użytkownik ponownie kliknie linię
 
         except InterruptedError:
-            self.queue.put(lambda: self.set_status(f"Anulowano generowanie dla linii {identifier}."))
+            self.queue.put(
+                lambda: self.set_status(f"Anulowano generowanie dla linii {identifier}."))
         except Exception as e:
             print(f"Błąd generowania dla linii {identifier}: {e}")
-            self.queue.put(lambda e=e: messagebox.showerror("Błąd generowania", f"Wystąpił błąd: {e}", parent=self))
-            self.queue.put(lambda: self.set_status(f"Błąd generowania dla linii {identifier}."))
+            self.queue.put(lambda e=e: messagebox.showerror(
+                "Błąd generowania", f"Wystąpił błąd: {e}", parent=self))
+            self.queue.put(
+                lambda: self.set_status(f"Błąd generowania dla linii {identifier}."))
             # Próba usunięcia nieudanego pliku .wav
             if output_path and output_path.exists():
                 try:
                     os.remove(output_path)
                 except OSError:
                     pass
-        finally: self.generation_lock.release(); self.queue.put(self.update_audio_buttons_state)
+        finally:
+            self.generation_lock.release()
+            self.queue.put(self.update_audio_buttons_state)
 
     def start_generate_all(self):
         """Starts the generation of all missing audio files in a new thread."""
         if not self.audio_dir:
-            messagebox.showwarning("Brak katalogu", "Najpierw wybierz katalog audio w menu 'Dialogi'.", parent=self)
+            messagebox.showwarning(
+                "Brak katalogu", "Najpierw wybierz katalog audio w menu 'Dialogi'.", parent=self)
             return
         if not self.processed_replace:
-            messagebox.showwarning("Brak danych", "Najpierw przetwórz napisy przyciskiem 'Zastosuj'.", parent=self)
+            messagebox.showwarning(
+                "Brak danych", "Najpierw przetwórz napisy przyciskiem 'Zastosuj'.", parent=self)
             return
 
         if not self.generation_lock.acquire(blocking=False):
@@ -1196,9 +1480,32 @@ class SubtitleStudioApp(ctk.CTk):
             return
 
         self.cancel_generation_event.clear()
-        self.progress_window = GenerationProgressWindow(self, self.cancel_generation_event)
+        self.progress_window = GenerationProgressWindow(
+            self, self.cancel_generation_event)
         self.set_status("Start generowania wszystkich...")
         threading.Thread(target=self._task_generate_all, daemon=True).start()
+
+    def start_convert_all(self):
+        """Starts the audio conversion process in a new thread."""
+        if not self.audio_dir:
+            messagebox.showwarning(
+                "Brak katalogu", "Najpierw wybierz katalog audio w menu 'Dialogi'.", parent=self)
+            return
+
+        # Użyj nowej, dedykowanej blokady konwersji
+        if not self.conversion_lock.acquire(blocking=False):
+            self.set_status("Konwersja audio jest już w toku...")
+            return
+
+        self.cancel_generation_event.clear()
+        self.progress_window = GenerationProgressWindow(
+            self, self.cancel_generation_event)
+        # Zmień tytuł okna, aby było jasne, co się dzieje
+        self.progress_window.title("Konwersja Audio")
+        self.set_status("Rozpoczynam konwersję audio...")
+
+        # Poprawnie przekaż funkcję zadania do wątku (bez nawiasów)
+        threading.Thread(target=self._task_convert_all, daemon=True).start()
 
     def _task_generate_all(self):
         """Worker thread task for generating all missing files."""
@@ -1212,8 +1519,10 @@ class SubtitleStudioApp(ctk.CTk):
             self.queue.put(lambda: self.progress_window.update_progress(0, total_lines,
                                                                         f"Ładowanie modelu {self._get_active_tts_model_name()}..."))
             self._load_tts_model()
-            if self.tts_model is None: return  # Błąd już zgłoszony
-            if self.cancel_generation_event.is_set(): raise InterruptedError("Anulowano")
+            if self.tts_model is None:
+                return  # Błąd już zgłoszony
+            if self.cancel_generation_event.is_set():
+                raise InterruptedError("Anulowano")
 
             # 2. Znajdź brakujące pliki
             for i, text in enumerate(self.processed_replace):
@@ -1222,8 +1531,10 @@ class SubtitleStudioApp(ctk.CTk):
                 raw_wav = self.audio_dir / f"output1 ({identifier}).wav"
                 raw_mp3 = self.audio_dir / f"output1 ({identifier}).mp3"
                 # Sprawdź OGG w katalogu ready
-                ready_ogg1 = self.audio_dir / "ready" / f"output1 ({identifier}).ogg"
-                ready_ogg2 = self.audio_dir / "ready" / f"output2 ({identifier}).ogg"
+                ready_ogg1 = self.audio_dir / "ready" / \
+                             f"output1 ({identifier}).ogg"
+                ready_ogg2 = self.audio_dir / "ready" / \
+                             f"output2 ({identifier}).ogg"
 
                 # Jeśli *żaden* z potencjalnych plików nie istnieje, dodaj do kolejki
                 if not (raw_wav.exists() or raw_mp3.exists() or ready_ogg1.exists() or ready_ogg2.exists()):
@@ -1242,12 +1553,14 @@ class SubtitleStudioApp(ctk.CTk):
                 self.queue.put(
                     lambda: messagebox.showinfo("Gotowe", "Wszystkie dialogi już istnieją lub zostały przetworzone.",
                                                 parent=self))
-                self.queue.put(lambda: self.set_status("Generowanie: Wszystkie pliki istnieją."))
+                self.queue.put(
+                    lambda: self.set_status("Generowanie: Wszystkie pliki istnieją."))
                 return
 
             # 3. Generuj TTS (pętla)
             for i, (identifier, text) in enumerate(dialogs_to_generate):
-                if self.cancel_generation_event.is_set(): raise InterruptedError("Anulowano")
+                if self.cancel_generation_event.is_set():
+                    raise InterruptedError("Anulowano")
 
                 current_processed = skipped_count + i + 1
                 self.queue.put(lambda cp=current_processed, tt=total_lines, i=i + 1, tg=total_to_gen:
@@ -1265,44 +1578,76 @@ class SubtitleStudioApp(ctk.CTk):
 
                 generated_count += 1  # Zliczaj tylko faktycznie wygenerowane
 
-            # 4. Konwertuj audio (wszystkie na raz, które istnieją jako wav/mp3 w głównym katalogu)
-            if self.cancel_generation_event.is_set():
-                self.queue.put(lambda: self.progress_window.set_indeterminate("Anulowano. Kończenie konwersji..."))
-            else:
-                self.queue.put(lambda: self.progress_window.set_indeterminate("Konwertowanie audio..."))
-
-            self._run_converter(is_single_file=False)
-
-            # 5. Zakończ
-            self.queue.put(lambda: self.progress_window.destroy())
-            final_message = f"Pomyślnie wygenerowano {generated_count} i pominięto {skipped_count} plików."
-            self.queue.put(lambda msg=final_message: messagebox.showinfo("Zakończono", msg, parent=self))
-            self.queue.put(lambda: self.set_status(f"Zakończono generowanie ({generated_count} nowych)."))
-
         except InterruptedError:
-            self.queue.put(lambda: self.progress_window.destroy() if self.progress_window else None)
+            self.queue.put(
+                lambda: self.progress_window.destroy() if self.progress_window else None)
             self.queue.put(lambda gc=generated_count, tg=total_to_gen: messagebox.showinfo("Anulowano",
                                                                                            f"Proces generowania przerwany.\nWygenerowano {gc} z {tg} potrzebnych plików.",
                                                                                            parent=self))
             self.queue.put(lambda: self.set_status("Generowanie anulowane."))
         except Exception as e:
             print(f"Błąd podczas generowania wszystkich: {e}")
-            if self.progress_window: self.queue.put(lambda: self.progress_window.destroy())
-            self.queue.put(lambda e=e: messagebox.showerror("Błąd generowania", f"Wystąpił błąd: {e}", parent=self))
-            self.queue.put(lambda: self.set_status("Błąd podczas generowania."))
+            if self.progress_window:
+                self.queue.put(lambda: self.progress_window.destroy())
+            self.queue.put(
+                lambda e=e: messagebox.showerror("Błąd generowania", f"Wystąpił błąd: {e}", parent=self))
+            self.queue.put(
+                lambda: self.set_status("Błąd podczas generowania."))
         finally:
             self.generation_lock.release()
+            # Odśwież stan przycisków po zakończeniu
+            self.queue.put(self.update_audio_buttons_state)
+
+    def _task_convert_all(self):
+        """Worker thread task for converting all raw audio files."""
+        try:
+            self.queue.put(
+                lambda: self.progress_window.set_indeterminate("Rozpoczynam konwersję audio...")
+            )
+
+            # Wywołaj główną funkcję konwertera, aby przetworzyła cały katalog
+            self._run_converter(is_single_file=False, single_file_path=None)
+
+            if self.cancel_generation_event.is_set():
+                raise InterruptedError("Anulowano")
+
+            self.queue.put(lambda: self.progress_window.destroy())
+            self.queue.put(
+                lambda: messagebox.showinfo("Zakończono", "Konwersja audio zakończona.", parent=self)
+            )
+            self.queue.put(lambda: self.set_status("Konwersja audio zakończona."))
+
+        except InterruptedError:
+            self.queue.put(
+                lambda: self.progress_window.destroy() if self.progress_window else None)
+            self.queue.put(lambda: messagebox.showinfo("Anulowano",
+                                                       "Proces konwersji przerwany.",
+                                                       parent=self))
+            self.queue.put(lambda: self.set_status("Konwersja anulowana."))
+        except Exception as e:
+            print(f"Błąd podczas konwersji wszystkich: {e}")
+            if self.progress_window:
+                self.queue.put(lambda: self.progress_window.destroy())
+            self.queue.put(
+                lambda e=e: messagebox.showerror("Błąd konwersji", f"Wystąpił błąd: {e}", parent=self))
+            self.queue.put(
+                lambda: self.set_status("Błąd podczas konwersji."))
+        finally:
+            # Upewnij się, że zwalniasz WŁAŚCIWĄ blokadę
+            self.conversion_lock.release()
             # Odśwież stan przycisków po zakończeniu
             self.queue.put(self.update_audio_buttons_state)
 
     def _call_xtts_api(self, text: str, output_file: str):
         """Helper method to call the XTTS API server."""
         if not isinstance(self.tts_model, dict) or 'url' not in self.tts_model or 'session' not in self.tts_model:
-            raise ConnectionError("Klient XTTS API nie jest poprawnie skonfigurowany.")
+            raise ConnectionError(
+                "Klient XTTS API nie jest poprawnie skonfigurowany.")
 
         api_url = self.tts_model['url']
         session = self.tts_model['session']
-        voice_path = self.global_config.get('xtts_voice_path', '')  # Pobierz ścieżkę głosu
+        # Pobierz ścieżkę głosu
+        voice_path = self.global_config.get('xtts_voice_path', '')
 
         payload = {
             "text": text,
@@ -1311,7 +1656,8 @@ class SubtitleStudioApp(ctk.CTk):
         }
 
         try:
-            response = session.post(api_url, json=payload, timeout=300)  # Timeout 5 minut
+            response = session.post(
+                api_url, json=payload, timeout=300)  # Timeout 5 minut
             response.raise_for_status()  # Rzuci błąd dla 4xx/5xx
 
             response_data = response.json()
@@ -1320,14 +1666,17 @@ class SubtitleStudioApp(ctk.CTk):
                     f"API zwróciło nieoczekiwaną odpowiedź: {response_data.get('error', response.text)}")
 
         except requests.exceptions.RequestException as e:
-            raise ConnectionError(f"Błąd połączenia z XTTS API ({api_url}): {e}")
+            raise ConnectionError(
+                f"Błąd połączenia z XTTS API ({api_url}): {e}")
         except json.JSONDecodeError:
-            raise ConnectionError(f"Nieprawidłowa odpowiedź JSON z XTTS API: {response.text}")
+            raise ConnectionError(
+                f"Nieprawidłowa odpowiedź JSON z XTTS API: {response.text}")
 
     def export_patterns_to_csv(self):
         """Exports custom 'replace' patterns to CSV file."""
         if not self.custom_replace:
-            messagebox.showinfo("Brak wzorców", "Brak własnych wzorców do eksportu.", parent=self)
+            messagebox.showinfo(
+                "Brak wzorców", "Brak własnych wzorców do eksportu.", parent=self)
             return
 
         path = filedialog.asksaveasfilename(
@@ -1341,12 +1690,18 @@ class SubtitleStudioApp(ctk.CTk):
 
         try:
             with open(path, "w", encoding="utf-8", newline="") as f:
-                writer = csv.writer(f)
+                # *** ZMIANA: Użyj QUOTE_ALL, aby uniknąć problemów ze znakami cudzysłowu ***
+                writer = csv.writer(f, quoting=csv.QUOTE_ALL)
                 for p in self.custom_replace:
-                    writer.writerow([p.pattern, p.replace, int(not p.ignore_case)])
-            messagebox.showinfo("Eksport zakończony", f"Zapisano {len(self.custom_replace)} wzorców do:\n{path}", parent=self)
+                    writer.writerow(
+                        [p.pattern, p.replace, int(not p.ignore_case)])
+            messagebox.showinfo(
+                "Eksport zakończony", f"Zapisano {len(self.custom_replace)} wzorców do:\n{path}", parent=self)
         except Exception as e:
-            messagebox.showerror("Błąd eksportu", f"Nie udało się zapisać pliku:\n{e}", parent=self)
+            messagebox.showerror(
+                "Błąd eksportu", f"Nie udało się zapisać pliku:\n{e}", parent=self)
+
+
 if __name__ == '__main__':
     ctk.set_appearance_mode('light')
     ctk.set_default_color_theme('blue')

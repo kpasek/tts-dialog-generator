@@ -1,8 +1,32 @@
 from pydub import AudioSegment
 import os
-from concurrent.futures import ProcessPoolExecutor as Executor
+from concurrent.futures import ProcessPoolExecutor
 import math
 from typing import Dict, Optional, Any
+import subprocess  # Dodano
+import sys  # Dodano
+
+
+def _convert_worker(task_args):
+    """
+    Funkcja robocza (top-level) dla puli procesów.
+    Tworzy własną instancję konwertera i wywołuje parse_ogg.
+    """
+    input_file, output_file, base_speed, filter_settings = task_args
+
+    # Print jest teraz tutaj, aby logować postęp z procesu roboczego
+    print(f"[Worker] Przetwarzam: {input_file} -> {output_file}")
+
+    try:
+        # Utwórz nową instancję w procesie roboczym
+        converter_instance = AudioConverter(
+            base_speed=base_speed, filter_settings=filter_settings)
+        # Wywołaj parse_ogg
+        converter_instance.parse_ogg(input_file, output_file)
+        return (input_file, True, None)
+    except Exception as e:
+        print(f"[Worker] Błąd podczas przetwarzania {input_file}: {e}")
+        return (input_file, False, str(e))
 
 
 class AudioConverter:
@@ -21,8 +45,6 @@ class AudioConverter:
         self.base_speed = base_speed
         self.filter_settings = filter_settings if filter_settings is not None else {}
 
-        print(f"AudioConverter zainicjowany z bazową prędkością: {self.base_speed}")
-        print(f"Ustawienia filtrów: {self.filter_settings}")
 
     def calculate_base_speed(self, duration_ms: float) -> float:
         """
@@ -69,9 +91,10 @@ class AudioConverter:
             input_dir, f"output2 {base_name}.ogg")
 
         if os.path.exists(output_path_speed) and os.path.exists(output_file):
-            return
+            return  # Pomiń, jeśli oba pliki już istnieją
 
-        print(f"Przetwarzam: {input_file} -> {output_file}")
+        # Ten print jest teraz w funkcji _convert_worker
+        # print(f"Przetwarzam: {input_file} -> {output_file}")
 
         try:
             # Pydub radzi sobie z różnymi formatami na wejściu
@@ -100,6 +123,8 @@ class AudioConverter:
                 except Exception as remove_err:
                     print(
                         f"Nie udało się usunąć pliku {output_file}: {remove_err}")
+            # Rzuć błąd dalej, aby _convert_worker go złapał
+            raise e
 
     def export_file(self, audio: AudioSegment, output_file: str, speed: float):
         """
@@ -116,7 +141,8 @@ class AudioConverter:
         audio.export(temp_file, format="ogg")
 
         filter_list = []
-        filter_order = ['highpass', 'lowpass', 'deesser', 'acompressor', 'loudnorm', 'alimiter']
+        filter_order = ['highpass', 'lowpass', 'deesser',
+                        'acompressor', 'loudnorm', 'alimiter']
 
         for filter_name in filter_order:
             config = self.filter_settings.get(filter_name)
@@ -144,14 +170,38 @@ class AudioConverter:
             # Jeśli nie ma filtrów, po prostu skopiuj plik (szybciej)
             command = f'ffmpeg -i "{temp_file}" -c copy -y -loglevel error "{output_file}"'
 
-        os.system(command)
+        # *** ZMIANA: Użyj subprocess.run zamiast os.system ***
+        creation_flags = 0
+        if sys.platform == "win32":
+            creation_flags = subprocess.CREATE_NO_WINDOW
+
+        try:
+            result = subprocess.run(
+                command,
+                shell=True,  # shell=True jest potrzebne dla złożonego łańcucha filtrów
+                check=True,
+                creationflags=creation_flags,
+                capture_output=True,
+                text=True,
+                encoding='utf-8'  # Jawne kodowanie
+            )
+        except subprocess.CalledProcessError as e:
+            print(f"Błąd FFmpeg (stdout): {e.stdout}")
+            print(f"Błąd FFmpeg (stderr): {e.stderr}")
+            # Przekaż błąd dalej, aby parse_ogg mógł go złapać
+            raise Exception(f"Błąd FFmpeg: {e.stderr}")
+        except Exception as e:
+            print(f"Nieoczekiwany błąd subprocess: {e}")
+            raise e
+        # *** Koniec zmiany ***
 
         try:
             os.remove(temp_file)
         except Exception as e:
-            print(f"Ostrzeżenie: Nie udało się usunąć pliku tymczasowego {temp_file}: {e}")
+            print(
+                f"Ostrzeżenie: Nie udało się usunąć pliku tymczasowego {temp_file}: {e}")
 
-    def convert_dir(self, audio_dir: str, output_dir: str):
+    def convert_dir(self, audio_dir: str, output_dir: str, max_workers: int = 4):
         """
         Converts all audio files in `audio_dir` (excluding /ready/)
         and saves them to `output_dir` using a process pool.
@@ -159,9 +209,12 @@ class AudioConverter:
         Args:
             audio_dir: Source directory with raw .wav/.mp3/.ogg files.
             output_dir: Target directory (usually '.../ready/').
+            max_workers: The number of processes to use.
         """
-        tasks_ogg = []
+        tasks = []
         os.makedirs(output_dir, exist_ok=True)
+
+        print(f"Rozpoczynam skanowanie {audio_dir} dla konwersji...")
 
         for filename in os.listdir(audio_dir):
             if filename.lower().endswith((".wav", ".ogg", ".mp3")):
@@ -169,12 +222,46 @@ class AudioConverter:
                     continue
 
                 input_path = os.path.join(audio_dir, filename)
-                output_path_ogg = self.build_output_file_path(filename, output_dir)
+                output_path_ogg = self.build_output_file_path(
+                    filename, output_dir)
 
-                self.parse_ogg(input_path, output_path_ogg)
+                base_name_match = os.path.splitext(filename)[0]
+                if base_name_match.startswith("output1 "):
+                    base_name = base_name_match[8:]
+                else:
+                    base_name = base_name_match
+                output_path_speed = os.path.join(output_dir, f"output2 {base_name}.ogg")
 
+                if os.path.exists(output_path_ogg) and os.path.exists(output_path_speed):
+                    continue
 
-        print(f"✅ Zakończono przetwarzanie wszystkich plików audio dla {audio_dir}")
+                task_args = (input_path, output_path_ogg,
+                             self.base_speed, self.filter_settings)
+                tasks.append(task_args)
+
+        if not tasks:
+            print(f"Nie znaleziono plików do konwersji w {audio_dir}.")
+            print(f"✅ Zakończono przetwarzanie wszystkich plików audio dla {audio_dir}")
+            return
+
+        print(
+            f"Znaleziono {len(tasks)} plików do przetworzenia. Używam {max_workers} procesów.")
+
+        successful_count = 0
+        failed_count = 0
+
+        with ProcessPoolExecutor(max_workers=max_workers) as executor:
+            results = executor.map(_convert_worker, tasks)
+
+            for (input_file, success, error_msg) in results:
+                if success:
+                    successful_count += 1
+                else:
+                    failed_count += 1
+                    print(f"NIE POWIODŁO SIĘ: {input_file} -> {error_msg}")
+
+        print(f"✅ Zakończono przetwarzanie dla {audio_dir}.")
+        print(f"Pomyślnie: {successful_count}, Nie powiodło się: {failed_count}")
 
     def build_output_file_path(self, filename: str, output_dir: str) -> str:
         """
