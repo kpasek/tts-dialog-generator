@@ -1536,16 +1536,14 @@ class SubtitleStudioApp(ctk.CTk):
                 ready_ogg2 = self.audio_dir / "ready" / \
                              f"output2 ({identifier}).ogg"
 
+                if self.cancel_generation_event.is_set():
+                    raise InterruptedError("Anulowano")
+
                 # Jeśli *żaden* z potencjalnych plików nie istnieje, dodaj do kolejki
                 if not (raw_wav.exists() or raw_mp3.exists() or ready_ogg1.exists() or ready_ogg2.exists()):
                     dialogs_to_generate.append((identifier, text))
                 else:
                     skipped_count += 1
-                    # Aktualizuj postęp dla pominiętych
-                    current_processed = skipped_count + generated_count
-                    self.queue.put(
-                        lambda cp=current_processed, tl=total_lines: self.progress_window.update_progress(cp, tl,
-                                                                                                          f"Sprawdzanie plików... ({skipped_count} pominięto)"))
 
             total_to_gen = len(dialogs_to_generate)
             if not dialogs_to_generate:
