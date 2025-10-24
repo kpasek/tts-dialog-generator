@@ -19,7 +19,7 @@ class GenerationProgressWindow(ctk.CTkToplevel):
         self.progress_bar.pack(pady=10, padx=20, fill="x")
         self.progress_bar.set(0)
 
-        self.cancel_button = ctk.CTkButton(self, text="Anuluj", command=self.on_cancel, fg_color="red",
+        self.cancel_button = ctk.CTkButton(self, text="Zatrzymaj", command=self.on_cancel, fg_color="red",
                                            hover_color="darkred")
         self.cancel_button.pack(pady=10, padx=20)
 
@@ -49,8 +49,8 @@ class GenerationProgressWindow(ctk.CTkToplevel):
 
     def on_cancel(self):
         """Ustawia flagę anulowania i blokuje przycisk."""
-        self.label.configure(text="Anulowanie...")
-        self.cancel_button.configure(state="disabled", text="Anulowanie...")
+        self.label.configure(text="Zatrzymywanie...")
+        self.cancel_button.configure(state="disabled", text="Zatrzymywanie...")
         self.update_idletasks()
         self.cancel_event.set()
         # Okno zostanie zamknięte przez wątek roboczy po zakończeniu
