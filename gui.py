@@ -191,29 +191,85 @@ class SubtitleStudioApp(ctk.CTk):
         root_grid = ctk.CTkFrame(self)
         root_grid.pack(fill="both", expand=True, padx=10, pady=10)
         root_grid.grid_rowconfigure(0, weight=1)
-        root_grid.grid_columnconfigure(2, weight=1)
+        root_grid.grid_columnconfigure(0, weight=1)
 
-        # --- LEFT: Built-in Patterns ---
-        left = ctk.CTkFrame(root_grid, width=MAX_COL_WIDTH)
-        left.grid(row=0, column=0, sticky="nsew", padx=(0, 10))
-        left.grid_columnconfigure(0, weight=1)
-        left.grid_rowconfigure(2, weight=1)
-        left.grid_rowconfigure(4, weight=1)
+        # --- Preview & Actions ---
+        right = ctk.CTkFrame(root_grid)
+        right.grid(row=0, column=0, sticky="nsew")
+        right.grid_columnconfigure(0, weight=1)
+        right.grid_rowconfigure(4, weight=1)
 
-        self.lbl_filename = ctk.CTkLabel(left, text="Brak wczytanego pliku")
-        self.lbl_filename.grid(row=0, column=0, sticky="ew", pady=(0, 8), padx=5)
+        # Stats and Apply button
+        stats_frame = ctk.CTkFrame(right)
+        stats_frame.grid(row=0, column=0, sticky="ew", pady=(0, 8))
+        ctk.CTkButton(stats_frame, text="Zastosuj wzorce",
+                      command=self.apply_processing).pack(side="left", padx=5)
 
-        ctk.CTkLabel(left, text="Wbudowane wzorce wycinające").grid(
-            row=1, column=0, sticky="we", padx=6)
-        self._create_builtin_list(
-            left, self.builtin_remove, self.builtin_remove_state, 2)
 
-        ctk.CTkLabel(left, text="Wbudowane wzorce podmieniające").grid(
-            row=3, column=0, sticky="we", padx=6)
-        self._create_builtin_list(
-            left, self.builtin_replace, self.builtin_replace_state, 4)
+        self.lbl_filename = ctk.CTkLabel(stats_frame, text="Brak wczytanego pliku")
+        self.lbl_filename.pack(side="left", anchor="w", padx=5)
 
-        # --- CENTER: Custom Patterns ---
+        self.lbl_count_orig = ctk.CTkLabel(stats_frame, text="Linie org.: 0")
+        self.lbl_count_orig.pack(side="right", anchor="w", padx=5)
+        self.lbl_count_after = ctk.CTkLabel(stats_frame, text="Linie po: 0")
+        self.lbl_count_after.pack(side="right", anchor="w", padx=5)
+
+        # Audio buttons
+        audio_btn_frame = ctk.CTkFrame(right)
+        audio_btn_frame.grid(
+            row=2, column=0, sticky="ew", pady=(0, 5), padx=5)  # Row 2
+
+        self.play_button = ctk.CTkButton(audio_btn_frame, text="▶️ Odtwórz", width=80, command=self.play_selected_audio,
+                                         state="disabled")
+        self.play_button.pack(side="left", padx=(0, 4))
+
+        self.audio_select_var = tk.StringVar(value="(brak plików)")
+        self.audio_select = ctk.CTkOptionMenu(
+            audio_btn_frame, variable=self.audio_select_var, values=["(brak plików)"])
+        self.audio_select.pack(side="left", padx=(4, 8))
+
+        if not PYGAME_AVAILABLE:
+            self.play_button.configure(state="disabled", text="N/A Pygame")
+
+        self.generate_button = ctk.CTkButton(audio_btn_frame, text="⚙️ Generuj", width=80,
+                                             command=self.generate_selected_audio, state="disabled")
+        self.generate_button.pack(side="left", padx=4)
+
+        self.delete_button = ctk.CTkButton(audio_btn_frame, text="❌ Usuń", width=80, command=self.delete_selected_audio,
+                                           state="disabled")
+        self.delete_button.pack(side="left", padx=4)
+
+        self.delete_all_button = ctk.CTkButton(audio_btn_frame, text="🗑️ Usuń Wsz.", width=80,
+                                               command=self.delete_all_selected_audio, state="disabled")
+        self.delete_all_button.pack(side="left", padx=4)
+
+        # Search bar
+        search_frame = ctk.CTkFrame(right)
+        search_frame.grid(
+            row=3, column=0, sticky="ew", pady=(0, 5), padx=5)  # Row 3
+        search_frame.grid_columnconfigure(0, weight=1)
+
+        self.search_entry = ctk.CTkEntry(
+            search_frame, placeholder_text="Przeszukaj podgląd")
+        self.search_entry.grid(row=0, column=0, sticky="ew")
+        self.search_entry.bind("<Return>", lambda event: self.apply_patterns())
+        self.search_entry.bind(
+            "<Control-BackSpace>", lambda event: self.search_entry.delete(0, tk.END))
+
+        self.search_button = ctk.CTkButton(
+            search_frame, text="Szukaj", command=self.apply_patterns)
+        self.search_button.grid(row=0, column=1, padx=(6, 0))
+
+        # Preview Textbox
+        self.txt_preview = ctk.CTkTextbox(right)
+        self.txt_preview.grid(
+            row=4, column=0, sticky="nsew", padx=5, pady=(0, 5))  # Row 4
+        self.txt_preview.configure(state=tk.DISABLED)
+        self.txt_preview.tag_config("selected_line", background="gray25")
+        self.txt_preview.bind("<ButtonRelease-1>", self.on_preview_click)
+        self.txt_preview.bind("<Double-Button-1>", self.play_selected_audio)
+        self.txt_preview.configure(cursor="hand2")
+
         self.center_frame = ctk.CTkFrame(root_grid, width=500)
         self.center_frame.grid_columnconfigure(0, weight=1)
         self.center_frame.grid(row=0, column=1, sticky="nsew", padx=(0, 10))
@@ -272,78 +328,21 @@ class SubtitleStudioApp(ctk.CTk):
         ctk.CTkButton(replace_inline_frame, text="Dodaj", command=self.add_inline_replace).pack(
             side="left", padx=2)
 
-        # --- RIGHT: Preview & Actions ---
-        right = ctk.CTkFrame(root_grid)
-        right.grid(row=0, column=2, sticky="nsew")
-        right.grid_columnconfigure(0, weight=1)
-        right.grid_rowconfigure(4, weight=1)
+        builtin_frame = ctk.CTkFrame(root_grid, width=MAX_COL_WIDTH)
+        builtin_frame.grid(row=0, column=2, sticky="nsew", padx=(0, 10))
+        builtin_frame.grid_columnconfigure(0, weight=1)
+        builtin_frame.grid_rowconfigure(2, weight=1)
+        builtin_frame.grid_rowconfigure(4, weight=1)
 
-        # Stats and Apply button
-        stats_frame = ctk.CTkFrame(right)
-        stats_frame.grid(row=0, column=0, sticky="ew", pady=(0, 8))
-        ctk.CTkButton(stats_frame, text="Zastosuj wzorce",
-                      command=self.apply_processing).pack(side="left", padx=5)
+        ctk.CTkLabel(builtin_frame, text="Wbudowane wzorce wycinające").grid(
+            row=1, column=0, sticky="we", padx=6)
+        self._create_builtin_list(
+            builtin_frame, self.builtin_remove, self.builtin_remove_state, 2)
 
-        self.lbl_count_orig = ctk.CTkLabel(stats_frame, text="Linie org.: 0")
-        self.lbl_count_orig.pack(side="left", anchor="w", padx=5)
-        self.lbl_count_after = ctk.CTkLabel(stats_frame, text="Linie po: 0")
-        self.lbl_count_after.pack(side="left", anchor="w", padx=5)
-
-        # Audio buttons
-        audio_btn_frame = ctk.CTkFrame(right)
-        audio_btn_frame.grid(
-            row=2, column=0, sticky="ew", pady=(0, 5), padx=5)  # Row 2
-
-        self.play_button = ctk.CTkButton(audio_btn_frame, text="▶️ Odtwórz", width=80, command=self.play_selected_audio,
-                                         state="disabled")
-        self.play_button.pack(side="left", padx=(0, 4))
-
-        self.audio_select_var = tk.StringVar(value="(brak plików)")
-        self.audio_select = ctk.CTkOptionMenu(
-            audio_btn_frame, variable=self.audio_select_var, values=["(brak plików)"])
-        self.audio_select.pack(side="left", padx=(4, 8))
-
-        if not PYGAME_AVAILABLE:
-            self.play_button.configure(state="disabled", text="N/A Pygame")
-
-        self.generate_button = ctk.CTkButton(audio_btn_frame, text="⚙️ Generuj", width=80,
-                                             command=self.generate_selected_audio, state="disabled")
-        self.generate_button.pack(side="left", padx=4)
-
-        self.delete_button = ctk.CTkButton(audio_btn_frame, text="❌ Usuń", width=80, command=self.delete_selected_audio,
-                                           state="disabled")
-        self.delete_button.pack(side="left", padx=4)
-
-        self.delete_all_button = ctk.CTkButton(audio_btn_frame, text="🗑️ Usuń Wsz.", width=80,
-                                               command=self.delete_all_selected_audio, state="disabled")
-        self.delete_all_button.pack(side="left", padx=4)
-
-        # Search bar
-        search_frame = ctk.CTkFrame(right)
-        search_frame.grid(
-            row=3, column=0, sticky="ew", pady=(0, 5), padx=5)  # Row 3
-        search_frame.grid_columnconfigure(0, weight=1)
-
-        self.search_entry = ctk.CTkEntry(
-            search_frame, placeholder_text="Przeszukaj podgląd")
-        self.search_entry.grid(row=0, column=0, sticky="ew")
-        self.search_entry.bind("<Return>", lambda event: self.apply_patterns())
-        self.search_entry.bind(
-            "<Control-BackSpace>", lambda event: self.search_entry.delete(0, tk.END))
-
-        self.search_button = ctk.CTkButton(
-            search_frame, text="Szukaj", command=self.apply_patterns)
-        self.search_button.grid(row=0, column=1, padx=(6, 0))
-
-        # Preview Textbox
-        self.txt_preview = ctk.CTkTextbox(right)
-        self.txt_preview.grid(
-            row=4, column=0, sticky="nsew", padx=5, pady=(0, 5))  # Row 4
-        self.txt_preview.configure(state=tk.DISABLED)
-        self.txt_preview.tag_config("selected_line", background="gray25")
-        self.txt_preview.bind("<ButtonRelease-1>", self.on_preview_click)
-        self.txt_preview.bind("<Double-Button-1>", self.play_selected_audio)
-        self.txt_preview.configure(cursor="hand2")
+        ctk.CTkLabel(builtin_frame, text="Wbudowane wzorce podmieniające").grid(
+            row=3, column=0, sticky="we", padx=6)
+        self._create_builtin_list(
+            builtin_frame, self.builtin_replace, self.builtin_replace_state, 4)
 
         # --- Status Bar ---
         self.status = ctk.CTkLabel(self, text="Gotowy", anchor="w")
