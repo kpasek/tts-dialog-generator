@@ -125,6 +125,8 @@ class SubtitleStudioApp(ctk.CTk):
         self.audio_dir: Optional[Path] = None
         self.selected_line_index: Optional[int] = None
 
+        self._load_app_config(only_config=True)
+        self.apply_theme_settings()
         self._create_menu()
         self._create_widgets()
         self._load_app_config()
@@ -693,12 +695,14 @@ class SubtitleStudioApp(ctk.CTk):
         })
         return current_cfg
 
-    def _load_app_config(self):
+    def _load_app_config(self, only_config=False):
         """Loads the global app config."""
         if APP_CONFIG.exists():
             try:
                 with open(APP_CONFIG, "r", encoding="utf-8") as f:
                     self.global_config = json.load(f)
+                    if only_config:
+                        return
                 last_proj = self.global_config.get('last_project')
                 # Sprawdź czy plik projektu nadal istnieje
                 if last_proj and Path(last_proj).exists():
@@ -707,7 +711,9 @@ class SubtitleStudioApp(ctk.CTk):
                     # Jeśli nie istnieje, usuń wpis
                     if last_proj:
                         self.save_app_setting('last_project', None)
-                    self._reset_app_state()  # Zacznij od czystego stanu
+                    self._reset_app_state()
+                self.global_config.setdefault('appearance_mode', 'System')
+                self.global_config.setdefault('color_theme', 'blue')
 
             except Exception as e:
                 print(f"Błąd wczytywania konfiguracji aplikacji: {e}")
@@ -1733,9 +1739,21 @@ class SubtitleStudioApp(ctk.CTk):
 
         self.update_audio_buttons_state()
 
+    def apply_theme_settings(self):
+        """Ustawia tryb wyglądu i paletę kolorów CustomTkinter."""
+        mode = self.global_config.get('appearance_mode', 'System')
+        theme = self.global_config.get('color_theme', 'blue')
+
+        try:
+            ctk.set_appearance_mode(mode)
+            ctk.set_default_color_theme(theme)
+            print(f"Zastosowano motyw: {mode}, kolor: {theme}")
+        except Exception as e:
+            print(f"Błąd podczas ustawiania motywu: {e}")
+            ctk.set_appearance_mode('System')
+            ctk.set_default_color_theme('blue')
+
 
 if __name__ == '__main__':
-    ctk.set_appearance_mode('System')
-    ctk.set_default_color_theme('blue')
     app = SubtitleStudioApp()
     app.mainloop()

@@ -222,7 +222,8 @@ class GenerationManager:
 
             try:
                 if job.tts_model_name in ['XTTS', 'STylish']:
-                    self._call_local_api(tts_model_instance, text, str(output_path), job.tts_config)
+                    self._call_local_api(tts_model_instance, text, str(
+                        output_path), job.tts_config)
                 elif isinstance(tts_model_instance, TTSBase):
                     tts_model_instance.tts(text, str(output_path))
                 else:
@@ -260,11 +261,12 @@ class GenerationManager:
             session = requests.Session()
             session.headers.update({'Content-Type': 'application/json'})
             return {'url': api_url.rstrip('/') + '/xtts/tts', 'session': session}
-        
+
         if model_name == 'STylish':
             api_url = config.get('local_api_url')
             if not api_url:
-                raise ValueError("Brak URL dla STylish API w konfiguracji zadania.")
+                raise ValueError(
+                    "Brak URL dla STylish API w konfiguracji zadania.")
             session = requests.Session()
             session.headers.update({'Content-Type': 'application/json'})
             return {'url': api_url.rstrip('/') + '/stylish/tts', 'session': session}
@@ -327,7 +329,7 @@ class GenerationManager:
                 if self.cancel_event.is_set():
                     # To nie zatrzyma puli procesów, ale przynajmniej przestanie wysyłać aktualizacje
                     print(
-                        "Otrzymano postęp konwersji, ale zadanie jest zatrzymane.")
+                        "Zatrzymano postęp konwersji, ale zadanie jest zatrzymane.")
                 else:
                     self._notify_progress(
                         current, total, f"Konwertowanie... ({current}/{total})")
@@ -336,8 +338,8 @@ class GenerationManager:
                 str(audio_dir),
                 str(output_dir),
                 max_workers=max_workers,
-                progress_callback=conversion_progress  # Przekaż callback
-            )
+                progress_callback=conversion_progress,
+                cancel_event=self.cancel_event)
 
         except Exception as e:
             print(f"Błąd podczas konwersji audio w menedżerze: {e}")

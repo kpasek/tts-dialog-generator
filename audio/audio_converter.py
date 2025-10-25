@@ -5,6 +5,7 @@ import math
 from typing import Dict, Optional, Any, Callable
 import subprocess
 import sys
+import threading
 
 
 def _convert_worker(task_args):
@@ -14,14 +15,11 @@ def _convert_worker(task_args):
     """
     input_file, output_file, base_speed, filter_settings = task_args
 
-    # Print jest teraz tutaj, aby logować postęp z procesu roboczego
     print(f"[Worker] Przetwarzam: {input_file} -> {output_file}")
 
     try:
-        # Utwórz nową instancję w procesie roboczym
         converter_instance = AudioConverter(
             base_speed=base_speed, filter_settings=filter_settings)
-        # Wywołaj parse_ogg
         converter_instance.parse_ogg(input_file, output_file)
         return (input_file, True, None)
     except Exception as e:
@@ -90,13 +88,9 @@ class AudioConverter:
             input_dir, f"output2 {base_name}.ogg")
 
         if os.path.exists(output_path_speed) and os.path.exists(output_file):
-            return  # Pomiń, jeśli oba pliki już istnieją
-
-        # Ten print jest teraz w funkcji _convert_worker
-        # print(f"Przetwarzam: {input_file} -> {output_file}")
+            return
 
         try:
-            # Pydub radzi sobie z różnymi formatami na wejściu
             if input_file.lower().endswith('.ogg'):
                 audio = AudioSegment.from_ogg(input_file)
             elif input_file.lower().endswith('.mp3'):
@@ -136,7 +130,6 @@ class AudioConverter:
             speed: The speed multiplier (atempo) to apply.
         """
         temp_file = output_file + ".temp.ogg"
-        # Eksportuj do ogg (pydub użyje libvorbis)
         audio.export(temp_file, format="ogg")
 
         filter_list = []
@@ -163,13 +156,10 @@ class AudioConverter:
             final_filter_chain = ""
 
         if final_filter_chain:
-            # Użyj -c:a libvorbis dla pewności, chociaż ffmpeg powinien to wykryć
             command = f'ffmpeg -i "{temp_file}" -af "{final_filter_chain}" -c:a libvorbis -y -loglevel error "{output_file}"'
         else:
-            # Jeśli nie ma filtrów, po prostu skopiuj plik (szybciej)
             command = f'ffmpeg -i "{temp_file}" -c copy -y -loglevel error "{output_file}"'
 
-        # *** ZMIANA: Użyj subprocess.run zamiast os.system ***
         creation_flags = 0
         if sys.platform == "win32":
             creation_flags = subprocess.CREATE_NO_WINDOW
@@ -177,22 +167,20 @@ class AudioConverter:
         try:
             result = subprocess.run(
                 command,
-                shell=True,  # shell=True jest potrzebne dla złożonego łańcucha filtrów
+                shell=True,
                 check=True,
                 creationflags=creation_flags,
                 capture_output=True,
                 text=True,
-                encoding='utf-8'  # Jawne kodowanie
+                encoding='utf-8'
             )
         except subprocess.CalledProcessError as e:
             print(f"Błąd FFmpeg (stdout): {e.stdout}")
             print(f"Błąd FFmpeg (stderr): {e.stderr}")
-            # Przekaż błąd dalej, aby parse_ogg mógł go złapać
             raise Exception(f"Błąd FFmpeg: {e.stderr}")
         except Exception as e:
             print(f"Nieoczekiwany błąd subprocess: {e}")
             raise e
-        # *** Koniec zmiany ***
 
         try:
             os.remove(temp_file)
@@ -200,7 +188,10 @@ class AudioConverter:
             print(
                 f"Ostrzeżenie: Nie udało się usunąć pliku tymczasowego {temp_file}: {e}")
 
-    def convert_dir(self, audio_dir: str, output_dir: str, max_workers: int = 4, progress_callback: Optional[Callable[[int, int], None]] = None):
+    def convert_dir(self, audio_dir: str, output_dir: str, max_workers: int = 4,
+                    progress_callback: Optional[Callable[[
+                        int, int], None]] = None,
+                    cancel_event: Optional[threading.Event] = None):
         """
         Converts all audio files in `audio_dir` (excluding /ready/)
         and saves them to `output_dir` using a process pool.
@@ -212,7 +203,33 @@ class AudioConverter:
             progress_callback: Optional function to call with (current, total) progress.
         """
         tasks = []
-        # ... (logika budowania listy 'tasks' bez zmian) ...
+        os.makedirs(output_dir, exist_ok=True)
+
+        print(f"Rozpoczynam skanowanie {audio_dir} dla konwersji...")
+
+        for filename in os.listdir(audio_dir):
+            if filename.lower().endswith((".wav", ".ogg", ".mp3")):
+                if filename.lower().endswith(".temp.ogg"):
+                    continue
+
+                input_path = os.path.join(audio_dir, filename)
+                output_path_ogg = self.build_output_file_path(
+                    filename, output_dir)
+
+                base_name_match = os.path.splitext(filename)[0]
+                if base_name_match.startswith("output1 "):
+                    base_name = base_name_match[8:]
+                else:
+                    base_name = base_name_match
+                output_path_speed = os.path.join(
+                    output_dir, f"output2 {base_name}.ogg")
+
+                if os.path.exists(output_path_ogg) and os.path.exists(output_path_speed):
+                    continue
+
+                task_args = (input_path, output_path_ogg,
+                             self.base_speed, self.filter_settings)
+                tasks.append(task_args)
 
         if not tasks:
             print(f"Nie znaleziono plików do konwersji w {audio_dir}.")
@@ -227,16 +244,20 @@ class AudioConverter:
         failed_count = 0
         total_tasks = len(tasks)
 
-        # *** ZMIANA: Użycie submit i as_completed zamiast map ***
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
-            # Użyj submit zamiast map
             futures = {executor.submit(
                 _convert_worker, task_args): task_args for task_args in tasks}
 
             for i, future in enumerate(as_completed(futures)):
                 task_args = futures[future]
-                # Pobierz input_file z oryginalnego zadania
                 input_file = task_args[0]
+
+                if cancel_event and cancel_event.is_set():
+                    print("Anulowanie konwersji wymuszone przez użytkownika.")
+                    # Anuluj wszystkie oczekujące zadania (nie są one jeszcze uruchomione)
+                    for remaining_future in futures:
+                        remaining_future.cancel()
+                    break  # Wyjdź z pętli as_completed
 
                 try:
                     _, success, error_msg = future.result()
@@ -252,15 +273,17 @@ class AudioConverter:
 
                 if progress_callback:
                     try:
-                        # Wyślij postęp (i+1, total_tasks)
                         progress_callback(i + 1, total_tasks)
                     except Exception as e:
                         print(f"Błąd w progress_callback: {e}")
-        # *** KONIEC ZMIANY ***
 
-        print(f"✅ Zakończono przetwarzanie dla {audio_dir}.")
-        print(
-            f"Pomyślnie: {successful_count}, Nie powiodło się: {failed_count}")
+            if cancel_event and cancel_event.is_set():
+                print("Proces konwersji zakończony anulowaniem.")
+                # Nie rzucamy wyjątku, tylko kończymy normalnie.
+            else:
+                print(f"✅ Zakończono przetwarzanie dla {audio_dir}.")
+                print(
+                    f"Pomyślnie: {successful_count}, Nie powiodło się: {failed_count}")
 
     def build_output_file_path(self, filename: str, output_dir: str) -> str:
         """

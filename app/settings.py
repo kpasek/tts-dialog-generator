@@ -194,12 +194,34 @@ class SettingsWindow(ctk.CTkToplevel):
                              padx=10, pady=(5, 10))
         CreateToolTip(entry_gcp_voice, "Np. pl-PL-Wavenet-B", wraplength=300)
 
-        # Sekcja 3: Filtry FFmpeg
+        theme_frame = ctk.CTkFrame(frame)
+        theme_frame.grid(row=4, column=0, columnspan=3, sticky="ew", padx=6)
+        ctk.CTkLabel(theme_frame, text="Motyw aplikacji:",
+                     font=("", 14, "bold")).pack(anchor="w", padx=10, pady=(5, 0))
+
+        # 3.1. Wygląd
+        ctk.CTkLabel(theme_frame, text="Wygląd (Jasny/Ciemny/System):").pack(
+            anchor="w", padx=10, pady=(5, 0))
+        self.appearance_mode_var = ctk.StringVar(
+            value=self.master.global_config.get('appearance_mode', 'System'))
+        ctk.CTkOptionMenu(theme_frame, values=["System", "Dark", "Light"],
+                          variable=self.appearance_mode_var).pack(anchor="w", padx=10, pady=(0, 5))
+
+        # 3.2. Kolor
+        ctk.CTkLabel(theme_frame, text="Paleta kolorów:").pack(
+            anchor="w", padx=10, pady=(5, 0))
+        self.color_theme_var = ctk.StringVar(
+            value=self.master.global_config.get('color_theme', 'blue'))
+        ctk.CTkOptionMenu(theme_frame,
+                          values=["blue", "green", "dark-blue"],
+                          variable=self.color_theme_var).pack(anchor="w", padx=10, pady=(0, 10))
+
+        # Sekcja 4: Filtry FFmpeg
         ctk.CTkLabel(frame, text="Filtry Audio (FFmpeg)", font=("", 16, "bold")).grid(
-            row=4, column=0, columnspan=3, sticky="w", padx=10, pady=(20, 5))
+            row=5, column=0, columnspan=3, sticky="w", padx=10, pady=(20, 5))
         self.filters_frame = ctk.CTkFrame(frame)
         self.filters_frame.grid(
-            row=5, column=0, columnspan=3, sticky="ew", padx=10, pady=5)
+            row=6, column=0, columnspan=3, sticky="ew", padx=10, pady=5)
         self.filters_frame.grid_columnconfigure(1, weight=1)
 
         self.filter_vars = {}
@@ -334,11 +356,14 @@ class SettingsWindow(ctk.CTkToplevel):
                 'elevenlabs_voice_id': self.el_voice_id_var.get(),
                 'google_credentials_path': self.gcp_creds_var.get(),
                 'google_voice_name': self.gcp_voice_name_var.get(),
-                'ffmpeg_filters': filters_data
+                'ffmpeg_filters': filters_data,
+                'appearance_mode': self.appearance_mode_var.get(),
+                'color_theme': self.color_theme_var.get()
             }
             # *** Koniec zmiany ***
 
             self.master.save_global_config(global_data)
+            self.master.apply_theme_settings()
 
             # Reset cached model if voice/API keys changed
             # Prościej: zawsze resetuj przy zapisie ustawień globalnych
