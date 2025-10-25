@@ -239,6 +239,10 @@ class SubtitleStudioApp(ctk.CTk):
         self.lbl_count_orig.pack(side="right", anchor="w", padx=5)
         self.lbl_count_after = ctk.CTkLabel(stats_frame, text="Linie po: 0")
         self.lbl_count_after.pack(side="right", anchor="w", padx=5)
+        self.lbl_count_words = ctk.CTkLabel(stats_frame, text="Słowa: 0")
+        self.lbl_count_words.pack(side="right", anchor="w", padx=5)
+        self.lbl_count_chars = ctk.CTkLabel(stats_frame, text="Znaki: 0")
+        self.lbl_count_chars.pack(side="right", anchor="w", padx=5)
 
         # Audio buttons
         audio_btn_frame = ctk.CTkFrame(right)
@@ -260,6 +264,9 @@ class SubtitleStudioApp(ctk.CTk):
         self.generate_button = ctk.CTkButton(audio_btn_frame, text="⚙️ Generuj", width=80,
                                              command=self.enqueue_generate_single, state="disabled")
         self.generate_button.pack(side="left", padx=4)
+        self.edit_line_button = ctk.CTkButton(audio_btn_frame, text="✏️ Edytuj linię", width=80,
+                                              command=self.add_replace_pattern_from_selection, state="disabled")
+        self.edit_line_button.pack(side="left", padx=4)
 
         self.delete_button = ctk.CTkButton(audio_btn_frame, text="❌ Usuń", width=80, command=self.delete_selected_audio,
                                            state="disabled")
@@ -318,8 +325,15 @@ class SubtitleStudioApp(ctk.CTk):
         self.custom_remove_frame.grid(
             row=1, column=0, sticky="nsew", padx=6, pady=(2, 6))
 
-        ctk.CTkButton(self.center_frame, text="Dodaj wzorzec wycinający", command=self.open_add_remove_pattern).grid(
-            row=2, column=0, sticky="ew", padx=6, pady=4)
+        remove_btn_frame = ctk.CTkFrame(self.center_frame)
+        remove_btn_frame.grid(row=2, column=0, sticky="ew", padx=6, pady=4)
+        remove_btn_frame.grid_columnconfigure(0, weight=1)
+        remove_btn_frame.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkButton(remove_btn_frame, text="Dodaj wzorzec", command=self.open_add_remove_pattern).grid(
+            row=0, column=0, sticky="ew", padx=(0, 2))
+        ctk.CTkButton(remove_btn_frame, text="Wyczyść listę", command=lambda: self._clear_custom_list('remove'),
+                      fg_color="gray").grid(row=0, column=1, sticky="ew", padx=(2, 0))
 
         replace_top_frame = ctk.CTkFrame(self.center_frame)
         replace_top_frame.grid(row=3, column=0, sticky="ew", pady=(4, 4))
@@ -331,8 +345,15 @@ class SubtitleStudioApp(ctk.CTk):
         self.custom_replace_frame.grid(
             row=4, column=0, sticky="nsew", padx=6, pady=(2, 6))
 
-        ctk.CTkButton(self.center_frame, text="Dodaj wzorzec podmieniający", command=self.open_add_replace_pattern).grid(
-            row=5, column=0, sticky="ew", padx=6, pady=4)
+        replace_btn_frame = ctk.CTkFrame(self.center_frame)
+        replace_btn_frame.grid(row=5, column=0, sticky="ew", padx=6, pady=4)
+        replace_btn_frame.grid_columnconfigure(0, weight=1)
+        replace_btn_frame.grid_columnconfigure(1, weight=1)
+
+        ctk.CTkButton(replace_btn_frame, text="Dodaj wzorzec", command=self.open_add_replace_pattern).grid(
+            row=0, column=0, sticky="ew", padx=(0, 2))
+        ctk.CTkButton(replace_btn_frame, text="Wyczyść listę", command=lambda: self._clear_custom_list('replace'),
+                      fg_color="gray").grid(row=0, column=1, sticky="ew", padx=(2, 0))
 
         builtin_frame = ctk.CTkFrame(root_grid, width=MAX_COL_WIDTH)
         builtin_frame.grid(row=0, column=2, sticky="nsew", padx=(0, 10))
@@ -434,18 +455,14 @@ class SubtitleStudioApp(ctk.CTk):
         """Adds a UI row for a pattern."""
         row = ctk.CTkFrame(frame)
         row.pack(fill="x", pady=2, padx=2)
-        lbl_text = f"[{pattern_item.pattern}] -> [{pattern_item.replace}] {'' if pattern_item.ignore_case else '(Aa)'}"
-        lbl = ctk.CTkLabel(row, text=lbl_text)
-        lbl.pack(side="left", fill="x", expand=False, padx=4)
 
         def on_edit_click(event):
             # Sprawdź, czy wciśnięty jest klawisz Control (maska 0x0004)
             if event.state & 0x0004:
                 self.open_edit_pattern(pattern_item, target_list)
 
-        # Bindowanie do ramki i etykiety dla pewności
         row.bind("<Button-1>", on_edit_click)
-        lbl.bind("<Button-1>", on_edit_click)
+        row.bind("<Double-Button-1>", on_edit_click)
 
         def on_delete():
             try:
@@ -459,9 +476,32 @@ class SubtitleStudioApp(ctk.CTk):
             self.open_edit_pattern(pattern_item, target_list)
 
         btnEdit = ctk.CTkButton(row, text="Edytuj", width=60, command=on_edit)
-        btnEdit.pack(side="right", padx=4)
+        btnEdit.pack(side="left", padx=4)
         btnX = ctk.CTkButton(row, text="X", width=60, command=on_delete)
-        btnX.pack(side="right", padx=4)
+        btnX.pack(side="left", padx=4)
+
+        lbl_text = f"[{pattern_item.pattern}] -> [{pattern_item.replace}] {'' if pattern_item.ignore_case else '(Aa)'}"
+        lbl = ctk.CTkLabel(row, text=lbl_text)
+        lbl.pack(side="left", fill="x", expand=False, padx=4)
+        lbl.bind("<Button-1>", on_edit_click)
+
+    def _clear_custom_list(self, pattern_type: str):
+        """Usuwa wszystkie wzorce z wybranej listy (remove lub replace)."""
+        target_list = self.custom_remove if pattern_type == 'remove' else self.custom_replace
+        list_name = "wycinających" if pattern_type == 'remove' else "podmieniających"
+
+        if not target_list:
+            messagebox.showinfo(
+                "Lista jest pusta", f"Lista wzorców {list_name} jest już pusta.", parent=self)
+            return
+
+        if messagebox.askyesno("Potwierdź",
+                               f"Czy na pewno chcesz usunąć WSZYSTKIE ({len(target_list)}) wzorce z listy '{list_name}'?",
+                               parent=self):
+            target_list.clear()
+            self._refresh_custom_lists()
+            self.mark_as_unsaved()
+            self.set_status(f"Wyczyszczono listę wzorców {list_name}.")
 
     def load_file(self, path: Optional[str] = None, bypass_save_check: bool = False):
         """Loads a subtitle .txt file."""
@@ -780,7 +820,7 @@ class SubtitleStudioApp(ctk.CTk):
     def apply_patterns(self):
         """Recalculates processed lines and updates preview."""
         self.lbl_count_orig.configure(
-            text=f'Linie org.: {len(self.original_lines)}')
+            text=f'Linie org.: {len(self.original_lines):,}'.replace(",", " "))
         rem_patterns, rep_patterns = self._gather_active_patterns()
 
         try:
@@ -797,8 +837,19 @@ class SubtitleStudioApp(ctk.CTk):
                 'Błąd przetwarzania', f'Wystąpił nieoczekiwany błąd podczas stosowania wzorców:\n{e}')
             return
 
+        total_words = sum(len(line.split())
+                          for line in self.processed_replace)
+        total_chars = sum(len(line) for line in self.processed_replace)
+
         self.lbl_count_after.configure(
-            text=f'Linie po: {len(self.processed_clean)}')
+            text=f'Linie po: {len(self.processed_clean):,}'.replace(",", " "))
+        self.lbl_count_words.configure(
+            text=f'Słowa: {total_words:,}'.replace(",", " "))
+        self.lbl_count_chars.configure(
+            text=f'Znaki: {total_chars:,}'.replace(",", " "))
+
+        self.lbl_count_after.configure(
+            text=f'Linie po: {len(self.processed_clean):,}'.replace(",", " "))
         self.set_preview(self.processed_replace)
         self.update_audio_buttons_state()
 
@@ -1116,6 +1167,9 @@ class SubtitleStudioApp(ctk.CTk):
         line_selected = self.selected_line_index is not None
         audio_dir_set = self.audio_dir is not None and self.audio_dir.is_dir()
 
+        project_loaded = self.current_project_path is not None
+        lines_processed = bool(self.processed_replace)
+
         # Znajdź pliki dla zaznaczonej linii (jeśli jest)
         files_exist = False
         if line_selected and audio_dir_set:
@@ -1133,14 +1187,20 @@ class SubtitleStudioApp(ctk.CTk):
 
         # Ustaw stany przycisków
         play_state = "normal" if PYGAME_AVAILABLE and line_selected and audio_dir_set and files_exist else "disabled"
-        gen_state = "normal" if line_selected and audio_dir_set else "disabled"
+        gen_state = "normal" if line_selected and audio_dir_set and project_loaded and lines_processed else "disabled"
+
         del_state = "normal" if line_selected and audio_dir_set and files_exist else "disabled"
-        del_all_state = del_state  # Taki sam warunek jak dla pojedynczego usunięcia
+        del_all_state = del_state
+
+        # *** NOWOŚĆ: Stan dla przycisku "Edytuj linię" ***
+        edit_state = "normal" if line_selected and lines_processed else "disabled"
 
         self.play_button.configure(state=play_state)
         self.generate_button.configure(state=gen_state)
         self.delete_button.configure(state=del_state)
         self.delete_all_button.configure(state=del_all_state)
+        # Ustaw stan nowego przycisku
+        self.edit_line_button.configure(state=edit_state)
 
     def _get_selected_identifier(self) -> str | None:
         """Returns the identifier (line number as string) of the selected line, or None."""
@@ -1326,9 +1386,12 @@ class SubtitleStudioApp(ctk.CTk):
 
     def _gather_tts_config(self) -> dict:
         """Zbiera wszystkie ustawienia globalne potrzebne modelom TTS."""
+        project_xtts_path = self.project_config.get('xtts_voice_path')
+
         return {
             'xtts_api_url': self.global_config.get('xtts_api_url'),
-            'xtts_voice_path': self.global_config.get('xtts_voice_path'),
+            # Użyj ścieżki projektu, jeśli istnieje; w przeciwnym razie użyj globalnej
+            'xtts_voice_path': project_xtts_path or self.global_config.get('xtts_voice_path'),
             'elevenlabs_api_key': self.global_config.get('elevenlabs_api_key'),
             'elevenlabs_voice_id': self.global_config.get('elevenlabs_voice_id'),
             'google_credentials_path': self.global_config.get('google_credentials_path'),
@@ -1414,7 +1477,6 @@ class SubtitleStudioApp(ctk.CTk):
         )
 
         GenerationManager.get_instance().add_job(job)
-        self.show_generation_queue()
         self.set_status(f"Dodano zadanie (linia {identifier}) do kolejki.")
 
     def enqueue_generate_all(self):

@@ -35,7 +35,6 @@ class SettingsWindow(ctk.CTkToplevel):
     The displayed tab depends on the 'mode' parameter.
     """
 
-    # === ZMIANA: Dodano parametr 'mode' ===
     def __init__(self, master: 'SubtitleStudioApp', torch_installed: bool, mode: str = 'global'):
         super().__init__(master)
         self.master = master
@@ -47,11 +46,9 @@ class SettingsWindow(ctk.CTkToplevel):
         else:
             self.title("Ustawienia Projektu")
             self.geometry("600x300")
-        # =======================================
 
         self.transient(master)
 
-        # === ZMIANA: Tworzymy tylko potrzebną zakładkę ===
         if self.mode == 'global':
             self.global_scroll_frame = ctk.CTkScrollableFrame(self)
             self.global_scroll_frame.pack(
@@ -69,7 +66,6 @@ class SettingsWindow(ctk.CTkToplevel):
                     "Błąd", "Brak otwartego projektu.", parent=master)
                 self.after(10, self.quit)
                 return
-        # =============================================
 
         btn_frame = ctk.CTkFrame(self, fg_color="transparent")
         btn_frame.pack(fill="x", padx=10, pady=10)
@@ -113,7 +109,8 @@ class SettingsWindow(ctk.CTkToplevel):
             value=self.master.global_config.get('conversion_workers', default_workers))
         entry_workers = ctk.CTkEntry(
             frame_main, textvariable=self.conversion_workers_var)
-        entry_workers.grid(row=1, column=1, sticky="ew", padx=(0, 10), pady=(0, 10))
+        entry_workers.grid(row=1, column=1, sticky="ew",
+                           padx=(0, 10), pady=(0, 10))
         CreateToolTip(
             entry_workers,
             f"Liczba procesów do konwersji audio (max: {cpu_count}). Więcej = szybciej, ale większe użycie CPU.",
@@ -254,13 +251,32 @@ class SettingsWindow(ctk.CTkToplevel):
         model_menu.grid(row=2, column=1, sticky="w", padx=10, pady=10)
         CreateToolTip(
             model_menu, "Wybierz model do generowania audio.", wraplength=300)
+        ctk.CTkLabel(frame, text="Ścieżka głosu XTTS (Projekt)").grid(
+            row=4, column=0, padx=10, pady=5, sticky="w")
 
-    def select_voice_file(self):
+        self.xtts_voice_project_path_var = tk.StringVar(
+            value=self.master.project_config.get('xtts_voice_path', ''))
+
+        self.ent_xtts_voice_project = ctk.CTkEntry(
+            frame, width=350, textvariable=self.xtts_voice_project_path_var)
+        self.ent_xtts_voice_project.grid(
+            row=4, column=1, padx=(0, 10), pady=5, sticky="ew")
+        self.btn_browse_xtts_voice_project = ctk.CTkButton(frame, text="...", width=30,
+                                                           command=lambda: self.select_voice_file(self.xtts_voice_project_path_var))
+        self.btn_browse_xtts_voice_project.grid(
+            row=4, column=2, padx=10, pady=5)
+
+        CreateToolTip(self.ent_xtts_voice_project,
+                      "Opcjonalne: Nadpisz globalną ścieżkę do pliku .wav z głosem XTTS tylko dla tego projektu.")
+
+    def select_voice_file(self, ent_path_var=None):
         """Opens dialog to select XTTS voice file."""
         path = filedialog.askopenfilename(title="Wybierz plik głosu .wav", filetypes=[
             ("Wave", "*.wav")], initialdir=self._get_initial_dir(), parent=self)
         if path:
-            self.xtts_voice_path_var.set(path)
+            if ent_path_var is None:
+                ent_path_var = self.xtts_voice_path_var
+            ent_path_var.set(path)
 
     def select_gcp_creds(self):
         """Opens dialog to select GCP credentials file."""
@@ -302,7 +318,8 @@ class SettingsWindow(ctk.CTkToplevel):
                 cpu_count = os.cpu_count()
                 workers = int(self.conversion_workers_var.get())
                 # Prosta walidacja - nie mniej niż 1, nie więcej niż (CPU * 2)
-                workers = max(1, min(workers, cpu_count * 2 if cpu_count else 32))
+                workers = max(
+                    1, min(workers, cpu_count * 2 if cpu_count else 32))
             except ValueError:
                 workers = max(1, os.cpu_count() // 2 if os.cpu_count() else 4)
             except:  # Na wypadek gdyby os.cpu_count() zawiodło
@@ -344,6 +361,8 @@ class SettingsWindow(ctk.CTkToplevel):
             self.master.set_project_config('base_audio_speed', speed)
             self.master.set_project_config(
                 'active_tts_model', self.active_model_var.get())
+            self.master.set_project_config(
+                'xtts_voice_path', self.xtts_voice_project_path_var.get())
         except ValueError:
             messagebox.showerror(
                 "Błędna wartość", "Przyspieszenie musi być liczbą.", parent=self)
