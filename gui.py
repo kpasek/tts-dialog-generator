@@ -23,8 +23,11 @@ from app.utils import apply_remove_patterns, apply_replace_patterns, resource_pa
 from app.entity import PatternItem
 from app.tooltip import CreateToolTip
 
+from audio.audio_renamer import AudioRenameWindow
+from audio.pattern_editor import PatternEditorWindow
+from audio.progress import GenerationProgressWindow
 from audio.deleter import AudioDeleterWindow
-from audio.progress import GenerationProgressWindow  # Potrzebne do paska postępu
+from audio.progress import GenerationProgressWindow
 
 # --- TTS Model Imports ---
 from generators.google_cloud_tts import GoogleCloudTTS
@@ -47,15 +50,18 @@ BUILTIN_REPLACE = [
     (PatternItem(r"\[[^\]]*\]+", " ", True), "Usuń treść [.*]"),
     (PatternItem(r"\<[^\>]*\>+", " ", True), "Usuń treść <.*>"),
     (PatternItem(r"\{[^\}]*\}+", " ", True), "Usuń treść {.*}"),
-    (PatternItem(r"\([^\)]*\)}+", " ", True), "Usuń treść (.*)"),
+    (PatternItem(r"\([^\)]*\)+", " ", True), "Usuń treść (.*)"),
     (PatternItem(r"…", "...", True), "Popraw trójkropek"),
     (PatternItem(r"\.{2,}", ".", True), "Trójkropek > kropka"),
     (PatternItem(r"\?!", "?", True), "?! -> ?"),
     (PatternItem(r"\?{2,}", "?", True), "?(?)+ -> ?"),
-    (PatternItem(r"[@#$^&*\(\)\{\}]+", " ", True), "Usuń znaki specjalne jak @#$"),
+    (PatternItem(r"[@#$^&*\(\)\{\}]+", " ", True),
+     "Usuń znaki specjalne jak @#$"),
     (PatternItem(r"\s{2,}", " ", True), "Zamień białe znaki na spacje"),
-    (PatternItem(r"^[-.\"\']", "", True), "Usuń wiodące znaki specjalne (-.\"')"),
-    (PatternItem(r"[-\.\"\']$", "", True), "Usuń kończące znaki specjalne (-.\"')"),
+    (PatternItem(r"^[-.\"\']", "", True),
+     "Usuń wiodące znaki specjalne (-.\"')"),
+    (PatternItem(r"[-\.\"\']$", "", True),
+     "Usuń kończące znaki specjalne (-.\"')"),
 ]
 
 try:
@@ -64,7 +70,8 @@ try:
     pygame.mixer.init()
     PYGAME_AVAILABLE = True
 except (ImportError, pygame.error) as e:
-    print(f"Ostrzeżenie: Pygame mixer nie mógł zostać zainicjowany ({e}). Odtwarzanie audio będzie niedostępne.")
+    print(
+        f"Ostrzeżenie: Pygame mixer nie mógł zostać zainicjowany ({e}). Odtwarzanie audio będzie niedostępne.")
     PYGAME_AVAILABLE = False
 
 
@@ -82,7 +89,8 @@ class SubtitleStudioApp(ctk.CTk):
         self.title(APP_TITLE)
         self.geometry("1700x1000")
         try:
-            self.iconphoto(False, tk.PhotoImage(file=resource_path("assets/icon512.png")))
+            self.iconphoto(False, tk.PhotoImage(
+                file=resource_path("assets/icon512.png")))
         except Exception:
             pass
 
@@ -91,8 +99,10 @@ class SubtitleStudioApp(ctk.CTk):
         self.processed_clean: List[str] = []
         self.processed_replace: List[str] = []
 
-        self.builtin_remove = [PatternItem(p.pattern, p.replace, p.ignore_case, name) for p, name in BUILTIN_REMOVE]
-        self.builtin_replace = [PatternItem(p.pattern, p.replace, p.ignore_case, name) for p, name in BUILTIN_REPLACE]
+        self.builtin_remove = [PatternItem(
+            p.pattern, p.replace, p.ignore_case, name) for p, name in BUILTIN_REMOVE]
+        self.builtin_replace = [PatternItem(
+            p.pattern, p.replace, p.ignore_case, name) for p, name in BUILTIN_REPLACE]
         self.builtin_remove_state = [tk.BooleanVar(value=True, name=f"br_{i}") for i, _ in
                                      enumerate(self.builtin_remove)]
         self.builtin_replace_state = [tk.BooleanVar(value=True, name=f"bp_{i}") for i, _ in
@@ -127,18 +137,23 @@ class SubtitleStudioApp(ctk.CTk):
         if self.current_project_path:  # Tylko jeśli projekt jest załadowany/zapisany
             self.has_unsaved_changes = True
             if "Gotowy" in self.status.cget("text") and "niezapisane" not in self.status.cget("text"):
-                self.set_status(f"{self.status.cget('text')} (niezapisane zmiany)")
+                self.set_status(
+                    f"{self.status.cget('text')} (niezapisane zmiany)")
 
     def _create_menu(self):
         """Creates the main application menu bar."""
         menubar = tk.Menu(self)
 
         config_menu = tk.Menu(menubar, tearoff=0)
-        config_menu.add_command(label="Otwórz projekt (.json)", command=self.open_project)
-        config_menu.add_command(label="Zapisz projekt", command=self.save_project)
-        config_menu.add_command(label="Zapisz jako", command=self.save_project_as)
+        config_menu.add_command(
+            label="Otwórz projekt (.json)", command=self.open_project)
+        config_menu.add_command(label="Zapisz projekt",
+                                command=self.save_project)
+        config_menu.add_command(label="Zapisz jako",
+                                command=self.save_project_as)
         config_menu.add_separator()
-        config_menu.add_command(label="Zamknij projekt", command=self.close_project)
+        config_menu.add_command(label="Zamknij projekt",
+                                command=self.close_project)
         config_menu.add_separator()
         config_menu.add_command(label="Zamknij", command=self.on_close)
         menubar.add_cascade(label="Projekt", menu=config_menu)
@@ -147,7 +162,7 @@ class SubtitleStudioApp(ctk.CTk):
         gen_menu.add_command(
             label="Wczytaj napisy", command=self.load_file)
         gen_menu.add_separator()
-        # *** Koniec zmiany ***
+
         gen_menu.add_command(
             label="Wybierz katalog audio", command=self.choose_audio_dir)
         gen_menu.add_command(
@@ -156,8 +171,10 @@ class SubtitleStudioApp(ctk.CTk):
         gen_menu.add_command(
             label="Konwertuj audio na ogg", command=self.start_convert_all)
 
+        gen_menu.add_command(
+            label="Dopasuj identyfikatory audio", command=self.open_audio_rename_window)
+
         gen_menu.add_separator()
-        # *** ZMIANA: Przeniesione i dodane opcje ***
         gen_menu.add_command(
             label="Pobierz napisy dla Game Reader", command=self.download_clean)
         gen_menu.add_command(
@@ -191,7 +208,12 @@ class SubtitleStudioApp(ctk.CTk):
         root_grid = ctk.CTkFrame(self)
         root_grid.pack(fill="both", expand=True, padx=10, pady=10)
         root_grid.grid_rowconfigure(0, weight=1)
+        # Kolumna 0 (prawy panel) może się rozciągać
         root_grid.grid_columnconfigure(0, weight=1)
+        # Kolumna 1 (środkowy panel) ma mieć stałą szerokość - ustawiamy minimalny rozmiar
+        root_grid.grid_columnconfigure(1, minsize=500)
+        # Kolumna 2 (panel wbudowanych wzorców) nie musi się rozszerzać poziomo
+        root_grid.grid_columnconfigure(2, weight=0)
 
         # --- Preview & Actions ---
         right = ctk.CTkFrame(root_grid)
@@ -205,8 +227,8 @@ class SubtitleStudioApp(ctk.CTk):
         ctk.CTkButton(stats_frame, text="Zastosuj wzorce",
                       command=self.apply_processing).pack(side="left", padx=5)
 
-
-        self.lbl_filename = ctk.CTkLabel(stats_frame, text="Brak wczytanego pliku")
+        self.lbl_filename = ctk.CTkLabel(
+            stats_frame, text="Brak wczytanego pliku")
         self.lbl_filename.pack(side="left", anchor="w", padx=5)
 
         self.lbl_count_orig = ctk.CTkLabel(stats_frame, text="Linie org.: 0")
@@ -270,12 +292,16 @@ class SubtitleStudioApp(ctk.CTk):
         self.txt_preview.bind("<Double-Button-1>", self.play_selected_audio)
         self.txt_preview.configure(cursor="hand2")
 
-        self.center_frame = ctk.CTkFrame(root_grid, width=500)
+        self.center_frame = ctk.CTkFrame(root_grid, width=450)
+        try:
+            self.center_frame.grid_propagate(False)
+        except Exception:
+            pass
+
         self.center_frame.grid_columnconfigure(0, weight=1)
-        self.center_frame.grid(row=0, column=1, sticky="nsew", padx=(0, 10))
+        self.center_frame.grid(row=0, column=1, sticky="ns", padx=(0, 10))
         self.center_frame.grid_rowconfigure(1, weight=1)
-        self.center_frame.grid_rowconfigure(
-            4, weight=1)  # Zmieniono z 5 na 4
+        self.center_frame.grid_rowconfigure(4, weight=1)
 
         ctk.CTkLabel(self.center_frame, text="Własne wzorce wycinające").grid(
             row=0, column=0, sticky="w", padx=6)
@@ -283,22 +309,8 @@ class SubtitleStudioApp(ctk.CTk):
         self.custom_remove_frame.grid(
             row=1, column=0, sticky="nsew", padx=6, pady=(2, 6))
 
-        clean_inline_frame = self.build_clean_list_frame(self.center_frame, 2)
-        self.ent_remove_pattern = ctk.CTkEntry(
-            clean_inline_frame, placeholder_text="regexp")
-        self.ent_remove_pattern.pack(
-            side="left", fill="x", expand=True, padx=(4, 2))
-        self.ent_remove_replace = ctk.CTkEntry(
-            clean_inline_frame, placeholder_text="zamień na")
-        self.ent_remove_replace.pack(
-            side="left", fill="x", expand=True, padx=(2, 2))
-        self.var_remove_ignore = tk.BooleanVar(value=False)
-        checkbox_rem = ctk.CTkCheckBox(
-            clean_inline_frame, text="Aa", variable=self.var_remove_ignore)
-        checkbox_rem.pack(side="left", padx=(2, 4))
-        CreateToolTip(checkbox_rem, 'Uwzględnij wielkość znaków')
-        ctk.CTkButton(clean_inline_frame, text="Dodaj", command=self.add_inline_remove).pack(
-            side="left", padx=2)
+        ctk.CTkButton(self.center_frame, text="Dodaj wzorzec wycinający", command=self.open_add_remove_pattern).grid(
+            row=2, column=0, sticky="ew", padx=6, pady=4)
 
         replace_top_frame = ctk.CTkFrame(self.center_frame)
         replace_top_frame.grid(row=3, column=0, sticky="ew", pady=(4, 4))
@@ -310,23 +322,8 @@ class SubtitleStudioApp(ctk.CTk):
         self.custom_replace_frame.grid(
             row=4, column=0, sticky="nsew", padx=6, pady=(2, 6))
 
-        replace_inline_frame = self.build_clean_list_frame(
-            self.center_frame, 5)  # Row 5
-        self.ent_replace_pattern = ctk.CTkEntry(
-            replace_inline_frame, placeholder_text="regexp")
-        self.ent_replace_pattern.pack(
-            side="left", fill="x", expand=True, padx=(4, 2))
-        self.ent_replace_replace = ctk.CTkEntry(
-            replace_inline_frame, placeholder_text="zamień na")
-        self.ent_replace_replace.pack(
-            side="left", fill="x", expand=True, padx=(2, 2))
-        self.var_replace_ignore = tk.BooleanVar(value=False)
-        ignore_checkbox = ctk.CTkCheckBox(
-            replace_inline_frame, text="Aa", variable=self.var_replace_ignore)
-        ignore_checkbox.pack(side="left", padx=(2, 4))
-        CreateToolTip(ignore_checkbox, 'Uwzględnij wielkość znaków')
-        ctk.CTkButton(replace_inline_frame, text="Dodaj", command=self.add_inline_replace).pack(
-            side="left", padx=2)
+        ctk.CTkButton(self.center_frame, text="Dodaj wzorzec podmieniający", command=self.open_add_replace_pattern).grid(
+            row=5, column=0, sticky="ew", padx=6, pady=4)
 
         builtin_frame = ctk.CTkFrame(root_grid, width=MAX_COL_WIDTH)
         builtin_frame.grid(row=0, column=2, sticky="nsew", padx=(0, 10))
@@ -369,35 +366,60 @@ class SubtitleStudioApp(ctk.CTk):
             cb = ctk.CTkCheckBox(sc, text=text, variable=states[i])
             cb.pack(anchor="w", pady=2)
 
-    def add_inline_remove(self):
-        """Adds a new custom 'remove' pattern from the input fields."""
-        pattern = self.ent_remove_pattern.get()
-        replace = self.ent_remove_replace.get()
-        case_sensitive = self.var_remove_ignore.get()
-        if not pattern:
-            return
+    def open_add_remove_pattern(self):
+        """Otwiera okno dodawania nowego wzorca wycinającego."""
+        PatternEditorWindow(
+            self,
+            pattern_type='remove',
+            callback=self.handle_pattern_update,
+            existing_pattern=None
+        )
 
-        new_pattern = PatternItem(pattern, replace, not case_sensitive)
-        self.custom_remove.append(new_pattern)
-        self.add_row(self.custom_remove_frame, new_pattern, self.custom_remove)
+    def open_add_replace_pattern(self):
+        """Otwiera okno dodawania nowego wzorca podmieniającego."""
+        PatternEditorWindow(
+            self,
+            pattern_type='replace',
+            callback=self.handle_pattern_update,
+            existing_pattern=None
+        )
+
+    def open_edit_pattern(self, pattern: PatternItem, target_list: List[PatternItem]):
+        """Otwiera okno edycji dla istniejącego wzorca."""
+        pattern_type = 'remove' if target_list is self.custom_remove else 'replace'
+
+        # Przekaż *oryginalny* wzorzec do edytora.
+        # Użytkownik edytuje regex, więc powinien widzieć regex.
+        PatternEditorWindow(
+            self,
+            pattern_type=pattern_type,
+            callback=self.handle_pattern_update,
+            existing_pattern=pattern
+        )
+
+    def handle_pattern_update(self, new_pattern: PatternItem, old_pattern: Optional[PatternItem], pattern_type: str):
+        """
+        Callback z PatternEditorWindow. Aktualizuje listę wzorców.
+        """
+        target_list = self.custom_remove if pattern_type == 'remove' else self.custom_replace
+
+        if old_pattern:
+            # Tryb edycji: znajdź stary i zastąp
+            try:
+                index = target_list.index(old_pattern)
+                target_list[index] = new_pattern
+            except ValueError:
+                # Nie znaleziono (nie powinno się zdarzyć), po prostu dodaj
+                target_list.append(new_pattern)
+                print(
+                    f"Ostrzeżenie: Nie znaleziono wzorca '{old_pattern.pattern}' do edycji. Dodano jako nowy.")
+        else:
+            # Tryb dodawania
+            target_list.append(new_pattern)
+
+        self._refresh_custom_lists()
         self.mark_as_unsaved()
-        self.ent_remove_pattern.delete(0, "end")
-        self.ent_remove_replace.delete(0, "end")
-
-    def add_inline_replace(self):
-        """Adds a new custom 'replace' pattern from the input fields."""
-        pattern = self.ent_replace_pattern.get()
-        replace = self.ent_replace_replace.get()
-        case_sensitive = self.var_replace_ignore.get()
-        if not pattern:
-            return
-
-        new_pattern = PatternItem(pattern, replace, not case_sensitive)
-        self.custom_replace.append(new_pattern)
-        self.add_row(self.custom_replace_frame, new_pattern, self.custom_replace)
-        self.mark_as_unsaved()
-        self.ent_replace_pattern.delete(0, "end")
-        self.ent_replace_replace.delete(0, "end")
+        self.set_status("Zaktualizowano wzorce.")
 
     def add_row(self, frame, pattern_item: PatternItem, target_list: List[PatternItem]):
         """Adds a UI row for a pattern."""
@@ -406,6 +428,15 @@ class SubtitleStudioApp(ctk.CTk):
         lbl_text = f"[{pattern_item.pattern}] -> [{pattern_item.replace}] {'' if pattern_item.ignore_case else '(Aa)'}"
         lbl = ctk.CTkLabel(row, text=lbl_text)
         lbl.pack(side="left", fill="x", expand=False, padx=4)
+
+        def on_edit_click(event):
+            # Sprawdź, czy wciśnięty jest klawisz Control (maska 0x0004)
+            if event.state & 0x0004:
+                self.open_edit_pattern(pattern_item, target_list)
+
+        # Bindowanie do ramki i etykiety dla pewności
+        row.bind("<Button-1>", on_edit_click)
+        lbl.bind("<Button-1>", on_edit_click)
 
         def on_delete():
             try:
@@ -470,13 +501,13 @@ class SubtitleStudioApp(ctk.CTk):
             self.current_project_path = Path(path)
             self.project_config = cfg
 
-            # === POPRAWKA: Użyj var._name jako klucza ===
             all_vars = self.builtin_remove_state + self.builtin_replace_state
             traces = {}
             for var in all_vars:
                 if var.trace_info():
                     trace_id = var.trace_info()[0][1]
-                    traces[var._name] = (var, trace_id)  # Zapisz var i trace_id pod nazwą
+                    # Zapisz var i trace_id pod nazwą
+                    traces[var._name] = (var, trace_id)
                     var.trace_remove("write", trace_id)
 
             for i, val in enumerate(cfg.get("builtin_remove_state", [])):
@@ -488,7 +519,6 @@ class SubtitleStudioApp(ctk.CTk):
 
             for name, (var, trace_id) in traces.items():
                 var.trace_add("write", self.mark_as_unsaved)
-            # ============================================
 
             self.custom_remove = [PatternItem.from_json(
                 x) for x in cfg.get("custom_remove", [])]
@@ -554,7 +584,8 @@ class SubtitleStudioApp(ctk.CTk):
         """Saves a single key-value pair to the current project config."""
         if self.project_config is None:
             self.project_config = {}
-        if self.project_config.get(param) != value:  # Zapisuj tylko jeśli jest zmiana
+        # Zapisuj tylko jeśli jest zmiana
+        if self.project_config.get(param) != value:
             self.project_config[param] = value
             self.mark_as_unsaved()
             if self.current_project_path:
@@ -615,7 +646,8 @@ class SubtitleStudioApp(ctk.CTk):
                 with open(APP_CONFIG, "r", encoding="utf-8") as f:
                     self.global_config = json.load(f)
                 last_proj = self.global_config.get('last_project')
-                if last_proj and Path(last_proj).exists():  # Sprawdź czy plik projektu nadal istnieje
+                # Sprawdź czy plik projektu nadal istnieje
+                if last_proj and Path(last_proj).exists():
                     self.open_project(last_proj)
                 else:
                     # Jeśli nie istnieje, usuń wpis
@@ -724,8 +756,10 @@ class SubtitleStudioApp(ctk.CTk):
         try:
             with open(path, 'w', encoding='utf-8') as f:
                 f.write('\n'.join(lines))
-            messagebox.showinfo('Gotowe', f'Zapisano napisy {description}:\n{path}', parent=self)
-            self.set_status(f'Zapisano napisy {description}: {Path(path).name}')
+            messagebox.showinfo(
+                'Gotowe', f'Zapisano napisy {description}:\n{path}', parent=self)
+            self.set_status(
+                f'Zapisano napisy {description}: {Path(path).name}')
         except Exception as e:
             messagebox.showerror('Błąd zapisu', str(e), parent=self)
 
@@ -789,7 +823,6 @@ class SubtitleStudioApp(ctk.CTk):
             self, self.processed_replace, str(self.audio_dir))
         win.grab_set()
 
-    # === ZMIANA: Rozdzielone funkcje ===
     def open_global_settings(self):
         """Opens the Global Settings window."""
         win = SettingsWindow(self, self.torch_installed, mode='global')
@@ -880,7 +913,8 @@ class SubtitleStudioApp(ctk.CTk):
             # 5. Save text file (bez pokazywania komunikatu)
             with open(text_file_dest_path, 'w', encoding='utf-8') as f:
                 f.write('\n'.join(self.processed_clean))
-            preset_template["text_file_path"] = str(text_file_dest_path.absolute())
+            preset_template["text_file_path"] = str(
+                text_file_dest_path.absolute())
 
             # 6. Handle audio
             if copy_audio:
@@ -895,10 +929,12 @@ class SubtitleStudioApp(ctk.CTk):
                 print(f"Kopiuję {source_audio_path} do {audio_dest_folder}")
                 shutil.copytree(str(source_audio_path), str(audio_dest_folder))
 
-                preset_template["audio_dir"] = str(audio_dest_folder.absolute())
+                preset_template["audio_dir"] = str(
+                    audio_dest_folder.absolute())
             else:
                 # Use absolute path to existing /ready dir
-                preset_template["audio_dir"] = str(source_audio_path.absolute())
+                preset_template["audio_dir"] = str(
+                    source_audio_path.absolute())
 
             # 7. Save clean.json
             with open(json_file_dest_path, "w", encoding="utf-8") as f:
@@ -911,7 +947,8 @@ class SubtitleStudioApp(ctk.CTk):
             )
 
         except Exception as e:
-            messagebox.showerror("Błąd generowania presetu", f"Wystąpił błąd:\n{e}", parent=self)
+            messagebox.showerror("Błąd generowania presetu",
+                                 f"Wystąpił błąd:\n{e}", parent=self)
 
     # *** Koniec nowej metody ***
 
@@ -941,6 +978,12 @@ class SubtitleStudioApp(ctk.CTk):
                     pattern = row[0].strip()
                     if not pattern:
                         print(f"Pominięto wiersz {i + 1}: pusty wzorzec")
+                        continue
+                    try:
+                        re.compile(pattern)
+                    except re.error as e:
+                        print(
+                            f"Pominięto wiersz {i + 1}: Niepoprawny regex '{pattern}'. Błąd: {e}")
                         continue
 
                     replace = row[1].strip() if len(row) > 1 else ""
@@ -1021,7 +1064,8 @@ class SubtitleStudioApp(ctk.CTk):
 
             # Musimy zmapować ten widoczny indeks na oryginalny indeks z `processed_replace`
             # Najpierw pobierz WSZYSTKIE linie z textboxa
-            all_visible_lines = self.txt_preview.get("1.0", tk.END).splitlines()
+            all_visible_lines = self.txt_preview.get(
+                "1.0", tk.END).splitlines()
             if visible_line_index >= len(all_visible_lines):
                 return  # Kliknięcie poza tekstem
 
@@ -1097,7 +1141,8 @@ class SubtitleStudioApp(ctk.CTk):
         # Uwzględniamy mp3 z elevenlabs
         candidates = [
             (self.audio_dir / f"output1 ({identifier}).wav", False),
-            (self.audio_dir / f"output1 ({identifier}).mp3", False),  # Dodano mp3
+            # Dodano mp3
+            (self.audio_dir / f"output1 ({identifier}).mp3", False),
             (self.audio_dir / f"output1 ({identifier}).ogg", False),
             (self.audio_dir / "ready" / f"output1 ({identifier}).ogg", True),
             (self.audio_dir / "ready" / f"output2 ({identifier}).ogg", True)
@@ -1200,7 +1245,8 @@ class SubtitleStudioApp(ctk.CTk):
 
         if errors:
             messagebox.showerror("Błąd usuwania",
-                                 f"Usunięto {deleted_count} z {len(files)} plików.\nBłędy:\n" + "\n".join(errors),
+                                 f"Usunięto {deleted_count} z {len(files)} plików.\nBłędy:\n" + "\n".join(
+                                     errors),
                                  parent=self)
         else:
             messagebox.showinfo("Usunięto", f"Pomyślnie usunięto {deleted_count} plików dla linii {identifier}.",
@@ -1320,7 +1366,6 @@ class SubtitleStudioApp(ctk.CTk):
 
         except Exception as e:
             self.tts_model = None  # Resetuj w razie błędu
-            # === POPRAWKA: Przekazanie 'e' do lambdy ===
             self.queue.put(lambda e=e: messagebox.showerror(
                 f"Błąd modelu {self.active_model_name}",
                 f"Nie udało się załadować/przygotować modelu:\n{e}",
@@ -1340,7 +1385,8 @@ class SubtitleStudioApp(ctk.CTk):
             return
 
         try:
-            base_speed = float(self.project_config.get('base_audio_speed', 1.1))
+            base_speed = float(
+                self.project_config.get('base_audio_speed', 1.1))
         except ValueError:
             base_speed = 1.1
 
@@ -1353,10 +1399,13 @@ class SubtitleStudioApp(ctk.CTk):
         # *** ZMIANA: Pobierz liczbę wątków ***
         try:
             # Użyj os.cpu_count() jako domyślnego, jeśli klucz nie istnieje
-            default_workers = max(1, os.cpu_count() // 2 if os.cpu_count() else 4)
-            max_workers = int(self.global_config.get('conversion_workers', default_workers))
+            default_workers = max(1, os.cpu_count() //
+                                  2 if os.cpu_count() else 4)
+            max_workers = int(self.global_config.get(
+                'conversion_workers', default_workers))
         except (ValueError, TypeError):
-            default_workers = max(1, os.cpu_count() // 2 if os.cpu_count() else 4)
+            default_workers = max(1, os.cpu_count() //
+                                  2 if os.cpu_count() else 4)
             max_workers = default_workers
         # *** Koniec zmiany ***
 
@@ -1531,9 +1580,9 @@ class SubtitleStudioApp(ctk.CTk):
                 raw_mp3 = self.audio_dir / f"output1 ({identifier}).mp3"
                 # Sprawdź OGG w katalogu ready
                 ready_ogg1 = self.audio_dir / "ready" / \
-                             f"output1 ({identifier}).ogg"
+                    f"output1 ({identifier}).ogg"
                 ready_ogg2 = self.audio_dir / "ready" / \
-                             f"output2 ({identifier}).ogg"
+                    f"output2 ({identifier}).ogg"
 
                 if self.cancel_generation_event.is_set():
                     raise InterruptedError("Anulowano")
@@ -1577,8 +1626,10 @@ class SubtitleStudioApp(ctk.CTk):
 
             self.queue.put(lambda: self.progress_window.destroy())
             final_message = f"Pomyślnie wygenerowano {generated_count} i pominięto {skipped_count} plików."
-            self.queue.put(lambda msg=final_message: messagebox.showinfo("Zakończono", msg, parent=self))
-            self.queue.put(lambda: self.set_status(f"Zakończono generowanie ({generated_count} nowych)."))
+            self.queue.put(lambda msg=final_message: messagebox.showinfo(
+                "Zakończono", msg, parent=self))
+            self.queue.put(lambda: self.set_status(
+                f"Zakończono generowanie ({generated_count} nowych)."))
 
         except InterruptedError:
             self.queue.put(
@@ -1600,12 +1651,12 @@ class SubtitleStudioApp(ctk.CTk):
             # Odśwież stan przycisków po zakończeniu
             self.queue.put(self.update_audio_buttons_state)
 
-
     def _task_convert_all(self):
         """Worker thread task for converting all raw audio files."""
         try:
             self.queue.put(
-                lambda: self.progress_window.set_indeterminate("Rozpoczynam konwersję audio...")
+                lambda: self.progress_window.set_indeterminate(
+                    "Rozpoczynam konwersję audio...")
             )
 
             # Wywołaj główną funkcję konwertera, aby przetworzyła cały katalog
@@ -1616,9 +1667,11 @@ class SubtitleStudioApp(ctk.CTk):
 
             self.queue.put(lambda: self.progress_window.destroy())
             self.queue.put(
-                lambda: messagebox.showinfo("Zakończono", "Konwersja audio zakończona.", parent=self)
+                lambda: messagebox.showinfo(
+                    "Zakończono", "Konwersja audio zakończona.", parent=self)
             )
-            self.queue.put(lambda: self.set_status("Konwersja audio zakończona."))
+            self.queue.put(lambda: self.set_status(
+                "Konwersja audio zakończona."))
 
             self.queue.put(lambda: self.progress_window.destroy())
 
@@ -1657,12 +1710,11 @@ class SubtitleStudioApp(ctk.CTk):
         }
         if self.active_model_name == "XTTS":
             voice_path = self.global_config.get('xtts_voice_path', '')
-            payload["voice_file"] =  voice_path
-
+            payload["voice_file"] = voice_path
 
         try:
             response = session.post(
-                api_url, json=payload, timeout=90)  # Timeout 
+                api_url, json=payload, timeout=90)  # Timeout
             response.raise_for_status()  # Rzuci błąd dla 4xx/5xx
 
             response_data = response.json()
@@ -1705,6 +1757,62 @@ class SubtitleStudioApp(ctk.CTk):
         except Exception as e:
             messagebox.showerror(
                 "Błąd eksportu", f"Nie udało się zapisać pliku:\n{e}", parent=self)
+
+    def add_remove_pattern_from_selection(self, event=None):
+        """
+        Dodaje wzorzec WYCINAJĄCY na podstawie zaznaczonej linii w podglądzie.
+        Używa re.escape() do stworzenia wzorca literalnego.
+        """
+        if self.selected_line_index is None:
+            return  # Brak zaznaczenia
+
+        try:
+            line_text = self.processed_replace[self.selected_line_index]
+            if not line_text.strip():
+                self.set_status("Pominięto dodanie wzorca (linia jest pusta).")
+                return
+
+            # Wyeskejpowany pattern (traktuj tekst literalnie)
+            escaped_pattern = re.escape(line_text)
+
+            # Nowy wzorzec wycinający (zamiana na pusty string)
+            # Domyślnie wrażliwy na wielkość liter (ignore_case=False) dla literalnego dopasowania
+            new_pattern = PatternItem(
+                pattern=escaped_pattern, replace="", ignore_case=False)
+
+            # Sprawdź, czy już nie istnieje
+            if any(p.pattern == new_pattern.pattern for p in self.custom_remove):
+                self.set_status(
+                    f"Wzorzec '{escaped_pattern[:30]}...' już istnieje.")
+                return
+
+            # Dodaj do listy i UI
+            self.custom_remove.append(new_pattern)
+            self.add_row(self.custom_remove_frame,
+                         new_pattern, self.custom_remove)
+            self.mark_as_unsaved()
+
+            self.set_status(
+                f"Dodano wzorzec wycinający: {escaped_pattern[:30]}...")
+
+        except IndexError:
+            self.set_status(
+                "Błąd: Nie można pobrać tekstu dla zaznaczonej linii.")
+        except Exception as e:
+            self.set_status(f"Błąd dodawania wzorca: {e}")
+
+    def open_audio_rename_window(self):
+        """Otwiera okno do masowej zmiany nazw plików audio."""
+        if not self.audio_dir or not self.audio_dir.is_dir():
+            messagebox.showwarning(
+                "Brak katalogu",
+                "Najpierw wybierz katalog audio (menu 'Dialogi').",
+                parent=self
+            )
+            return
+
+        win = AudioRenameWindow(self, self.audio_dir)
+        win.grab_set()
 
 
 if __name__ == '__main__':
