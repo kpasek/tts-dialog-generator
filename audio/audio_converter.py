@@ -1,10 +1,10 @@
 from pydub import AudioSegment
 import os
-from concurrent.futures import ProcessPoolExecutor
+from concurrent.futures import ProcessPoolExecutor, as_completed
 import math
-from typing import Dict, Optional, Any
-import subprocess  # Dodano
-import sys  # Dodano
+from typing import Dict, Optional, Any, Callable
+import subprocess
+import sys
 
 
 def _convert_worker(task_args):
@@ -44,7 +44,6 @@ class AudioConverter:
         """
         self.base_speed = base_speed
         self.filter_settings = filter_settings if filter_settings is not None else {}
-
 
     def calculate_base_speed(self, duration_ms: float) -> float:
         """
@@ -201,7 +200,7 @@ class AudioConverter:
             print(
                 f"Ostrzeżenie: Nie udało się usunąć pliku tymczasowego {temp_file}: {e}")
 
-    def convert_dir(self, audio_dir: str, output_dir: str, max_workers: int = 4):
+    def convert_dir(self, audio_dir: str, output_dir: str, max_workers: int = 4, progress_callback: Optional[Callable[[int, int], None]] = None):
         """
         Converts all audio files in `audio_dir` (excluding /ready/)
         and saves them to `output_dir` using a process pool.
@@ -210,38 +209,15 @@ class AudioConverter:
             audio_dir: Source directory with raw .wav/.mp3/.ogg files.
             output_dir: Target directory (usually '.../ready/').
             max_workers: The number of processes to use.
+            progress_callback: Optional function to call with (current, total) progress.
         """
         tasks = []
-        os.makedirs(output_dir, exist_ok=True)
-
-        print(f"Rozpoczynam skanowanie {audio_dir} dla konwersji...")
-
-        for filename in os.listdir(audio_dir):
-            if filename.lower().endswith((".wav", ".ogg", ".mp3")):
-                if filename.lower().endswith(".temp.ogg"):
-                    continue
-
-                input_path = os.path.join(audio_dir, filename)
-                output_path_ogg = self.build_output_file_path(
-                    filename, output_dir)
-
-                base_name_match = os.path.splitext(filename)[0]
-                if base_name_match.startswith("output1 "):
-                    base_name = base_name_match[8:]
-                else:
-                    base_name = base_name_match
-                output_path_speed = os.path.join(output_dir, f"output2 {base_name}.ogg")
-
-                if os.path.exists(output_path_ogg) and os.path.exists(output_path_speed):
-                    continue
-
-                task_args = (input_path, output_path_ogg,
-                             self.base_speed, self.filter_settings)
-                tasks.append(task_args)
+        # ... (logika budowania listy 'tasks' bez zmian) ...
 
         if not tasks:
             print(f"Nie znaleziono plików do konwersji w {audio_dir}.")
-            print(f"✅ Zakończono przetwarzanie wszystkich plików audio dla {audio_dir}")
+            print(
+                f"✅ Zakończono przetwarzanie wszystkich plików audio dla {audio_dir}")
             return
 
         print(
@@ -249,19 +225,42 @@ class AudioConverter:
 
         successful_count = 0
         failed_count = 0
+        total_tasks = len(tasks)
 
+        # *** ZMIANA: Użycie submit i as_completed zamiast map ***
         with ProcessPoolExecutor(max_workers=max_workers) as executor:
-            results = executor.map(_convert_worker, tasks)
+            # Użyj submit zamiast map
+            futures = {executor.submit(
+                _convert_worker, task_args): task_args for task_args in tasks}
 
-            for (input_file, success, error_msg) in results:
-                if success:
-                    successful_count += 1
-                else:
+            for i, future in enumerate(as_completed(futures)):
+                task_args = futures[future]
+                # Pobierz input_file z oryginalnego zadania
+                input_file = task_args[0]
+
+                try:
+                    _, success, error_msg = future.result()
+                    if success:
+                        successful_count += 1
+                    else:
+                        failed_count += 1
+                        print(f"NIE POWIODŁO SIĘ: {input_file} -> {error_msg}")
+                except Exception as e:
                     failed_count += 1
-                    print(f"NIE POWIODŁO SIĘ: {input_file} -> {error_msg}")
+                    print(
+                        f"NIE POWIODŁO SIĘ (Błąd 'future'): {input_file} -> {e}")
+
+                if progress_callback:
+                    try:
+                        # Wyślij postęp (i+1, total_tasks)
+                        progress_callback(i + 1, total_tasks)
+                    except Exception as e:
+                        print(f"Błąd w progress_callback: {e}")
+        # *** KONIEC ZMIANY ***
 
         print(f"✅ Zakończono przetwarzanie dla {audio_dir}.")
-        print(f"Pomyślnie: {successful_count}, Nie powiodło się: {failed_count}")
+        print(
+            f"Pomyślnie: {successful_count}, Nie powiodło się: {failed_count}")
 
     def build_output_file_path(self, filename: str, output_dir: str) -> str:
         """

@@ -28,6 +28,8 @@ from audio.pattern_editor import PatternEditorWindow
 from audio.progress import GenerationProgressWindow
 from audio.deleter import AudioDeleterWindow
 from audio.progress import GenerationProgressWindow
+from audio.generation_manager import GenerationManager, GenerationJob, ConversionJob
+from audio.generation_queue import GenerationQueueWindow
 
 # --- TTS Model Imports ---
 from generators.google_cloud_tts import GoogleCloudTTS
@@ -117,12 +119,8 @@ class SubtitleStudioApp(ctk.CTk):
         self.global_config = {}
         self.torch_installed = is_installed('torch')
 
-        self.tts_model: Optional[TTSBase | requests.Session] = None
-        self.active_model_name: str | None = None
-        self.generation_lock = threading.Lock()
-        self.conversion_lock = threading.Lock()
-        self.cancel_generation_event = threading.Event()
         self.queue = queue.Queue()
+        self.queue_window: Optional[GenerationQueueWindow] = None
 
         self.audio_dir: Optional[Path] = None
         self.selected_line_index: Optional[int] = None
@@ -161,18 +159,24 @@ class SubtitleStudioApp(ctk.CTk):
         gen_menu = tk.Menu(menubar, tearoff=0)
         gen_menu.add_command(
             label="Wczytaj napisy", command=self.load_file)
-        gen_menu.add_separator()
 
         gen_menu.add_command(
             label="Wybierz katalog audio", command=self.choose_audio_dir)
-        gen_menu.add_command(
-            label="Generuj dialogi", command=self.start_generate_all)
 
+        gen_menu.add_separator()
         gen_menu.add_command(
-            label="Konwertuj audio na ogg", command=self.start_convert_all)
+            label="Pokaż kolejkę zadań", command=self.show_generation_queue)
+        gen_menu.add_command(
+            label="Generuj dialogi", command=self.enqueue_generate_all)
+        gen_menu.add_command(
+            label="Konwertuj audio na ogg", command=self.enqueue_convert_all)
+
+        gen_menu.add_separator()
 
         gen_menu.add_command(
             label="Dopasuj identyfikatory audio", command=self.open_audio_rename_window)
+        gen_menu.add_command(
+            label="Usuń wszystkie przekonwertowane pliki (/ready)", command=self.delete_all_converted_audio)
 
         gen_menu.add_separator()
         gen_menu.add_command(
@@ -254,7 +258,7 @@ class SubtitleStudioApp(ctk.CTk):
             self.play_button.configure(state="disabled", text="N/A Pygame")
 
         self.generate_button = ctk.CTkButton(audio_btn_frame, text="⚙️ Generuj", width=80,
-                                             command=self.generate_selected_audio, state="disabled")
+                                             command=self.enqueue_generate_single, state="disabled")
         self.generate_button.pack(side="left", padx=4)
 
         self.delete_button = ctk.CTkButton(audio_btn_frame, text="❌ Usuń", width=80, command=self.delete_selected_audio,
@@ -287,9 +291,14 @@ class SubtitleStudioApp(ctk.CTk):
         self.txt_preview.grid(
             row=4, column=0, sticky="nsew", padx=5, pady=(0, 5))  # Row 4
         self.txt_preview.configure(state=tk.DISABLED)
-        self.txt_preview.tag_config("selected_line", background="gray25")
+        self.txt_preview.tag_config(
+            "selected_line", background="gray25", foreground="white")
         self.txt_preview.bind("<ButtonRelease-1>", self.on_preview_click)
         self.txt_preview.bind("<Double-Button-1>", self.play_selected_audio)
+        self.txt_preview.bind("<Control-Button-1>",
+                              self.add_replace_pattern_from_selection)
+        self.txt_preview.bind(
+            "<Delete>", self.add_remove_pattern_from_selection)
         self.txt_preview.configure(cursor="hand2")
 
         self.center_frame = ctk.CTkFrame(root_grid, width=450)
@@ -446,6 +455,11 @@ class SubtitleStudioApp(ctk.CTk):
             row.destroy()
             self.mark_as_unsaved()
 
+        def on_edit():
+            self.open_edit_pattern(pattern_item, target_list)
+
+        btnEdit = ctk.CTkButton(row, text="Edytuj", width=60, command=on_edit)
+        btnEdit.pack(side="right", padx=4)
         btnX = ctk.CTkButton(row, text="X", width=60, command=on_delete)
         btnX.pack(side="right", padx=4)
 
@@ -1295,8 +1309,179 @@ class SubtitleStudioApp(ctk.CTk):
                 self.update_audio_buttons_state()
 
     # ===============================
-    # === GENERATION LOGIC        ===
+    # === GENERATION LOGIC (NOWE) ===
     # ===============================
+
+    def show_generation_queue(self):
+        """Otwiera (lub przenosi na wierzch) okno kolejki generowania."""
+        if self.queue_window is None or not self.queue_window.winfo_exists():
+            self.queue_window = GenerationQueueWindow(self)
+            self.queue_window.lift()
+        else:
+            self.queue_window.lift()
+
+    def on_queue_window_close(self):
+        """Callback z okna kolejki, aby poinformować okno główne."""
+        self.queue_window = None
+
+    def _gather_tts_config(self) -> dict:
+        """Zbiera wszystkie ustawienia globalne potrzebne modelom TTS."""
+        return {
+            'xtts_api_url': self.global_config.get('xtts_api_url'),
+            'xtts_voice_path': self.global_config.get('xtts_voice_path'),
+            'elevenlabs_api_key': self.global_config.get('elevenlabs_api_key'),
+            'elevenlabs_voice_id': self.global_config.get('elevenlabs_voice_id'),
+            'google_credentials_path': self.global_config.get('google_credentials_path'),
+            'google_voice_name': self.global_config.get('google_voice_name'),
+        }
+
+    def _gather_converter_config(self) -> dict:
+        """Zbiera ustawienia dla konwertera."""
+        try:
+            base_speed = float(
+                self.project_config.get('base_audio_speed', 1.1))
+        except ValueError:
+            base_speed = 1.1
+
+        try:
+            default_workers = max(1, os.cpu_count() //
+                                  2 if os.cpu_count() else 4)
+            max_workers = int(self.global_config.get(
+                'conversion_workers', default_workers))
+        except (ValueError, TypeError):
+            default_workers = max(1, os.cpu_count() //
+                                  2 if os.cpu_count() else 4)
+            max_workers = default_workers
+
+        return {
+            'base_audio_speed': base_speed,
+            'ffmpeg_filters': self.global_config.get('ffmpeg_filters', {}),
+            'conversion_workers': max_workers
+        }
+
+    def _prepare_job_dependencies(self) -> bool:
+        """Sprawdza, czy wszystko jest gotowe do dodania zadania."""
+        if not self.audio_dir or not self.audio_dir.is_dir():
+            messagebox.showwarning(
+                "Brak katalogu", "Najpierw wybierz katalog audio w menu 'Dialogi'.", parent=self)
+            return False
+
+        if not self.current_project_path:
+            messagebox.showwarning(
+                "Brak projektu", "Zapisz projekt przed dodaniem do kolejki.", parent=self)
+            return False
+
+        if not self.processed_replace:
+            messagebox.showwarning(
+                "Brak danych", "Najpierw przetwórz napisy przyciskiem 'Zastosuj'.", parent=self)
+            return False
+
+        return True
+
+    def enqueue_generate_single(self):
+        """Dodaje zadanie generowania dla pojedynczej linii do kolejki."""
+        identifier = self._get_selected_identifier()
+        if identifier is None:
+            messagebox.showwarning(
+                "Brak zaznaczenia", "Najpierw wybierz linię z podglądu.", parent=self)
+            return
+
+        if not self._prepare_job_dependencies():
+            return
+
+        try:
+            line_index = int(identifier) - 1
+            text = self.processed_replace[line_index]
+            lines_to_gen = [(identifier, text)]
+        except (IndexError, ValueError):
+            messagebox.showerror(
+                "Błąd", f"Nie można pobrać tekstu dla ID: {identifier}", parent=self)
+            return
+
+        tts_model_name = self._get_active_tts_model_name()
+        if not tts_model_name:
+            messagebox.showerror(
+                "Błąd modelu", "Nie wybrano aktywnego modelu TTS w ustawieniach projektu.", parent=self)
+            return
+
+        job = GenerationJob(
+            project_path=f"POJEDYNCZY ({identifier}) - {self.current_project_path.name}",
+            audio_dir=self.audio_dir,
+            lines_to_generate=lines_to_gen,
+            tts_model_name=tts_model_name,
+            tts_config=self._gather_tts_config(),
+            converter_config=self._gather_converter_config()
+        )
+
+        GenerationManager.get_instance().add_job(job)
+        self.show_generation_queue()
+        self.set_status(f"Dodano zadanie (linia {identifier}) do kolejki.")
+
+    def enqueue_generate_all(self):
+        """Dodaje zadanie generowania dla wszystkich brakujących linii do kolejki."""
+        if not self._prepare_job_dependencies():
+            return
+
+        tts_model_name = self._get_active_tts_model_name()
+        if not tts_model_name:
+            messagebox.showerror(
+                "Błąd modelu", "Nie wybrano aktywnego modelu TTS w ustawieniach projektu.", parent=self)
+            return
+
+        # Znajdź brakujące pliki
+        dialogs_to_generate = []
+        for i, text in enumerate(self.processed_replace):
+            identifier = str(i + 1)
+            raw_wav = self.audio_dir / f"output1 ({identifier}).wav"
+            raw_mp3 = self.audio_dir / f"output1 ({identifier}).mp3"
+            ready_ogg1 = self.audio_dir / "ready" / \
+                f"output1 ({identifier}).ogg"
+            ready_ogg2 = self.audio_dir / "ready" / \
+                f"output2 ({identifier}).ogg"
+            if not (raw_wav.exists() or raw_mp3.exists() or ready_ogg1.exists() or ready_ogg2.exists()):
+                dialogs_to_generate.append((identifier, text))
+
+        if not dialogs_to_generate:
+            messagebox.showinfo(
+                "Brak zadań", "Wszystkie pliki audio wydają się być wygenerowane.", parent=self)
+            return
+
+        job = GenerationJob(
+            project_path=self.current_project_path.name,
+            audio_dir=self.audio_dir,
+            lines_to_generate=dialogs_to_generate,
+            tts_model_name=tts_model_name,
+            tts_config=self._gather_tts_config(),
+            converter_config=self._gather_converter_config()
+        )
+
+        GenerationManager.get_instance().add_job(job)
+        self.show_generation_queue()
+        self.set_status(
+            f"Dodano zadanie ({len(dialogs_to_generate)} linii) do kolejki.")
+
+    def enqueue_convert_all(self):
+        """Dodaje zadanie samej konwersji do kolejki."""
+        if not self.audio_dir or not self.audio_dir.is_dir():
+            messagebox.showwarning(
+                "Brak katalogu", "Najpierw wybierz katalog audio.", parent=self)
+            return
+
+        if not self.current_project_path:
+            messagebox.showwarning(
+                "Brak projektu", "Zapisz projekt przed dodaniem do kolejki.", parent=self)
+            return
+
+        job = ConversionJob(
+            project_path=f"KONWERSJA - {self.current_project_path.name}",
+            audio_dir=self.audio_dir,
+            converter_config=self._gather_converter_config()
+        )
+
+        GenerationManager.get_instance().add_job(job)
+        self.show_generation_queue()
+        self.set_status("Dodano zadanie konwersji audio do kolejki.")
+
     def check_queue(self):
         """Periodically checks queue for GUI updates."""
         try:
@@ -1306,428 +1491,6 @@ class SubtitleStudioApp(ctk.CTk):
         else:
             task()
         self.after(100, self.check_queue)
-
-    def _get_active_tts_model_name(self) -> str | None:
-        """Gets the active TTS model name from project config."""
-        proj_cfg = self._gather_project_config()
-        return proj_cfg.get('active_tts_model')
-
-    def _load_tts_model(self):
-        """
-        Loads the active TTS model instance based on project settings.
-        Sets self.tts_model to the loaded instance or None on failure.
-        """
-        self.active_model_name = self._get_active_tts_model_name()
-        if not self.active_model_name:
-            raise ValueError(
-                "Nie wybrano aktywnego modelu TTS w ustawieniach projektu.")
-
-        try:
-            # Wyczyść stary model/sesję
-            self.tts_model = None
-
-            if self.active_model_name == 'XTTS':
-                # --- Logika XTTS API ---
-                api_url = self.global_config.get(
-                    'xtts_api_url', 'http://127.0.0.1:8001')
-                if not api_url:
-                    raise ValueError(
-                        "URL dla XTTS API nie jest ustawione w Ustawieniach Globalnych.")
-                # Tworzymy sesję requests dla potencjalnych optymalizacji połączenia
-                session = requests.Session()
-                session.headers.update({'Content-Type': 'application/json'})
-                # Zapisujemy URL i sesję do użycia później
-                self.tts_model = {
-                    'url': api_url.rstrip('/') + '/xtts/tts', 'session': session}
-                print(
-                    f"Przygotowano klienta dla XTTS API: {self.tts_model['url']}")
-
-            elif self.active_model_name == 'ElevenLabs':
-                api_key = self.global_config.get('elevenlabs_api_key')
-                voice_id = self.global_config.get('elevenlabs_voice_id')
-                if not api_key or not voice_id:
-                    raise ValueError(
-                        "Klucz API lub Voice ID dla ElevenLabs nie są ustawione w Ustawieniach.")
-                self.tts_model = ElevenLabsTTS(
-                    api_key=api_key, voice_id=voice_id)
-
-            elif self.active_model_name == 'Google Cloud TTS':
-                creds_path = self.global_config.get('google_credentials_path')
-                voice_name = self.global_config.get('google_voice_name')
-                if not creds_path or not Path(creds_path).exists():
-                    raise ValueError(
-                        "Ścieżka do credentials .json dla Google TTS jest nieprawidłowa lub nie istnieje.")
-                self.tts_model = GoogleCloudTTS(
-                    credentials_path=creds_path, voice_name=voice_name)
-
-            else:
-                raise ValueError(
-                    f"Nieznany model TTS: {self.active_model_name}")
-
-        except Exception as e:
-            self.tts_model = None  # Resetuj w razie błędu
-            self.queue.put(lambda e=e: messagebox.showerror(
-                f"Błąd modelu {self.active_model_name}",
-                f"Nie udało się załadować/przygotować modelu:\n{e}",
-                parent=self
-            ))
-            if hasattr(self, 'progress_window') and self.progress_window:
-                self.queue.put(lambda: self.progress_window.destroy())
-
-    def _run_converter(self, is_single_file=False, single_file_path: Optional[Path] = None):
-        """Initializes and runs the AudioConverter."""
-        # Import wewnątrz, aby uniknąć problemów z circular import
-        # 4. Konwertuj audio (wszystkie na raz, które istnieją jako wav/mp3 w głównym katalogu)
-        from audio.audio_converter import AudioConverter
-
-        if not self.audio_dir:
-            print("Błąd: Katalog audio nie jest ustawiony do konwersji.")
-            return
-
-        try:
-            base_speed = float(
-                self.project_config.get('base_audio_speed', 1.1))
-        except ValueError:
-            base_speed = 1.1
-
-        filter_settings = self.global_config.get('ffmpeg_filters', {})
-        converter = AudioConverter(
-            base_speed=base_speed, filter_settings=filter_settings)
-        output_dir = self.audio_dir / "ready"
-        os.makedirs(output_dir, exist_ok=True)
-
-        # *** ZMIANA: Pobierz liczbę wątków ***
-        try:
-            # Użyj os.cpu_count() jako domyślnego, jeśli klucz nie istnieje
-            default_workers = max(1, os.cpu_count() //
-                                  2 if os.cpu_count() else 4)
-            max_workers = int(self.global_config.get(
-                'conversion_workers', default_workers))
-        except (ValueError, TypeError):
-            default_workers = max(1, os.cpu_count() //
-                                  2 if os.cpu_count() else 4)
-            max_workers = default_workers
-        # *** Koniec zmiany ***
-
-        try:
-            if is_single_file and single_file_path and single_file_path.exists():
-                output_file = converter.build_output_file_path(
-                    single_file_path.name, str(output_dir))
-                converter.parse_ogg(str(single_file_path), output_file)
-            elif not is_single_file:
-                # *** ZMIANA: Przekaż max_workers ***
-                converter.convert_dir(
-                    str(self.audio_dir), str(output_dir), max_workers=max_workers)
-        except Exception as conv_e:
-            print(f"Błąd podczas konwersji audio: {conv_e}")
-            self.queue.put(
-                lambda e=conv_e: messagebox.showerror("Błąd konwersji", f"Wystąpił błąd podczas konwersji audio:\n{e}",
-                                                      parent=self))
-
-    def generate_selected_audio(self):
-        """Starts generation for the currently selected line."""
-        identifier = self._get_selected_identifier()
-        if identifier is None:
-            messagebox.showwarning(
-                "Brak zaznaczenia", "Najpierw wybierz linię z podglądu.", parent=self)
-            return
-        if not self.audio_dir:
-            messagebox.showwarning(
-                "Brak katalogu", "Najpierw wybierz katalog audio w menu 'Dialogi'.", parent=self)
-            return
-
-        self.start_generate_single(identifier)
-
-    def start_generate_single(self, identifier: str):
-        """Starts the generation of a single audio file in a new thread."""
-        if not self.generation_lock.acquire(blocking=False):
-            self.set_status("Generowanie już w toku...")
-            return
-
-        self.cancel_generation_event.clear()
-        self.set_status(
-            f"Rozpoczynanie generowania dla linii {identifier}...")
-        threading.Thread(target=self._task_generate_single,
-                         args=(identifier,), daemon=True).start()
-
-    def _task_generate_single(self, identifier: str):
-        """Worker thread task for generating a single file."""
-        output_path = None  # Zdefiniuj przed try
-        try:
-            # 1. Załaduj model (lub przygotuj klienta API)
-            self.queue.put(
-                lambda: self.set_status(f"Ładowanie modelu {self._get_active_tts_model_name()}..."))
-            self._load_tts_model()
-            if self.tts_model is None:
-                return  # Błąd zgłoszony w _load_tts_model
-            if self.cancel_generation_event.is_set():
-                raise InterruptedError("Anulowano")
-
-            # 2. Generuj TTS
-            self.queue.put(
-                lambda: self.set_status(f"Generowanie głosu dla linii {identifier}..."))
-            line_index = int(identifier) - 1
-            text = self.processed_replace[line_index]
-            # Zawsze .wav jako cel pośredni
-            output_path = self.audio_dir / f"output1 ({identifier}).wav"
-
-            # --- Wywołanie TTS (API lub lokalnie) ---
-            if self.active_model_name == 'XTTS':
-                self._call_local_api(text, str(output_path))
-            elif isinstance(self.tts_model, TTSBase):  # Dla modeli online
-                self.tts_model.tts(text, str(output_path))
-            else:
-                raise TypeError("Niespodziewany typ modelu TTS.")
-
-            if self.cancel_generation_event.is_set():
-                raise InterruptedError("Anulowano")
-
-            # 3. Konwertuj audio
-            self.queue.put(
-                lambda: self.set_status(f"Konwertowanie audio dla linii {identifier}..."))
-            self._run_converter(is_single_file=True,
-                                single_file_path=output_path)
-
-            # 4. Odśwież GUI (status)
-            self.queue.put(
-                lambda: self.set_status(f"Zakończono generowanie dla linii {identifier}."))
-            # Odświeżenie przycisków nastąpi, jeśli użytkownik ponownie kliknie linię
-
-        except InterruptedError:
-            self.queue.put(
-                lambda: self.set_status(f"Anulowano generowanie dla linii {identifier}."))
-        except Exception as e:
-            print(f"Błąd generowania dla linii {identifier}: {e}")
-            self.queue.put(lambda e=e: messagebox.showerror(
-                "Błąd generowania", f"Wystąpił błąd: {e}", parent=self))
-            self.queue.put(
-                lambda: self.set_status(f"Błąd generowania dla linii {identifier}."))
-            # Próba usunięcia nieudanego pliku .wav
-            if output_path and output_path.exists():
-                try:
-                    os.remove(output_path)
-                except OSError:
-                    pass
-        finally:
-            self.generation_lock.release()
-            self.queue.put(self.update_audio_buttons_state)
-
-    def start_generate_all(self):
-        """Starts the generation of all missing audio files in a new thread."""
-        if not self.audio_dir:
-            messagebox.showwarning(
-                "Brak katalogu", "Najpierw wybierz katalog audio w menu 'Dialogi'.", parent=self)
-            return
-        if not self.processed_replace:
-            messagebox.showwarning(
-                "Brak danych", "Najpierw przetwórz napisy przyciskiem 'Zastosuj'.", parent=self)
-            return
-
-        if not self.generation_lock.acquire(blocking=False):
-            self.set_status("Generowanie już w toku...")
-            return
-
-        self.cancel_generation_event.clear()
-        self.progress_window = GenerationProgressWindow(
-            self, self.cancel_generation_event)
-        self.set_status("Start generowania wszystkich...")
-        threading.Thread(target=self._task_generate_all, daemon=True).start()
-
-    def start_convert_all(self):
-        """Starts the audio conversion process in a new thread."""
-        if not self.audio_dir:
-            messagebox.showwarning(
-                "Brak katalogu", "Najpierw wybierz katalog audio w menu 'Dialogi'.", parent=self)
-            return
-
-        # Użyj nowej, dedykowanej blokady konwersji
-        if not self.conversion_lock.acquire(blocking=False):
-            self.set_status("Konwersja audio jest już w toku...")
-            return
-
-        self.cancel_generation_event.clear()
-        self.progress_window = GenerationProgressWindow(
-            self, self.cancel_generation_event)
-        # Zmień tytuł okna, aby było jasne, co się dzieje
-        self.progress_window.title("Konwersja Audio")
-        self.set_status("Rozpoczynam konwersję audio...")
-
-        # Poprawnie przekaż funkcję zadania do wątku (bez nawiasów)
-        threading.Thread(target=self._task_convert_all, daemon=True).start()
-
-    def _task_generate_all(self):
-        """Worker thread task for generating all missing files."""
-        generated_count = 0
-        skipped_count = 0
-        total_lines = len(self.processed_replace)
-        dialogs_to_generate = []
-
-        try:
-            # 1. Załaduj model / Przygotuj klienta
-            self.queue.put(lambda: self.progress_window.update_progress(0, total_lines,
-                                                                        f"Ładowanie modelu {self._get_active_tts_model_name()}..."))
-            self._load_tts_model()
-            if self.tts_model is None:
-                return  # Błąd już zgłoszony
-            if self.cancel_generation_event.is_set():
-                raise InterruptedError("Anulowano")
-
-            # 2. Znajdź brakujące pliki
-            for i, text in enumerate(self.processed_replace):
-                identifier = str(i + 1)
-                # Sprawdź WAV i MP3 w katalogu głównym
-                raw_wav = self.audio_dir / f"output1 ({identifier}).wav"
-                raw_mp3 = self.audio_dir / f"output1 ({identifier}).mp3"
-                # Sprawdź OGG w katalogu ready
-                ready_ogg1 = self.audio_dir / "ready" / \
-                    f"output1 ({identifier}).ogg"
-                ready_ogg2 = self.audio_dir / "ready" / \
-                    f"output2 ({identifier}).ogg"
-
-                if self.cancel_generation_event.is_set():
-                    raise InterruptedError("Anulowano")
-
-                # Jeśli *żaden* z potencjalnych plików nie istnieje, dodaj do kolejki
-                if not (raw_wav.exists() or raw_mp3.exists() or ready_ogg1.exists() or ready_ogg2.exists()):
-                    dialogs_to_generate.append((identifier, text))
-                else:
-                    skipped_count += 1
-
-            total_to_gen = len(dialogs_to_generate)
-            if not dialogs_to_generate:
-                self.queue.put(lambda: self.progress_window.destroy())
-                self.queue.put(
-                    lambda: messagebox.showinfo("Gotowe", "Wszystkie dialogi już istnieją lub zostały przetworzone.",
-                                                parent=self))
-                self.queue.put(
-                    lambda: self.set_status("Generowanie: Wszystkie pliki istnieją."))
-                return
-
-            # 3. Generuj TTS (pętla)
-            for i, (identifier, text) in enumerate(dialogs_to_generate):
-                if self.cancel_generation_event.is_set():
-                    raise InterruptedError("Anulowano")
-
-                current_processed = skipped_count + i + 1
-                self.queue.put(lambda cp=current_processed, tt=total_lines, i=i + 1, tg=total_to_gen:
-                               self.progress_window.update_progress(cp, tt, f"Generowanie TTS... ({i}/{tg})"))
-
-                output_path = self.audio_dir / f"output1 ({identifier}).wav"
-
-                # --- Wywołanie TTS (API lub lokalnie) ---
-                if self.active_model_name == 'XTTS':
-                    self._call_local_api(text, str(output_path))
-                elif isinstance(self.tts_model, TTSBase):  # Modele online
-                    self.tts_model.tts(text, str(output_path))
-                else:
-                    raise TypeError("Niespodziewany typ modelu TTS.")
-
-                generated_count += 1  # Zliczaj tylko faktycznie wygenerowane
-
-            self.queue.put(lambda: self.progress_window.destroy())
-            final_message = f"Pomyślnie wygenerowano {generated_count} i pominięto {skipped_count} plików."
-            self.queue.put(lambda msg=final_message: messagebox.showinfo(
-                "Zakończono", msg, parent=self))
-            self.queue.put(lambda: self.set_status(
-                f"Zakończono generowanie ({generated_count} nowych)."))
-
-        except InterruptedError:
-            self.queue.put(
-                lambda: self.progress_window.destroy() if self.progress_window else None)
-            self.queue.put(lambda gc=generated_count, tg=total_to_gen: messagebox.showinfo("Anulowano",
-                                                                                           f"Proces generowania przerwany.\nWygenerowano {gc} z {tg} potrzebnych plików.",
-                                                                                           parent=self))
-            self.queue.put(lambda: self.set_status("Generowanie anulowane."))
-        except Exception as e:
-            print(f"Błąd podczas generowania wszystkich: {e}")
-            if self.progress_window:
-                self.queue.put(lambda: self.progress_window.destroy())
-            self.queue.put(
-                lambda e=e: messagebox.showerror("Błąd generowania", f"Wystąpił błąd: {e}", parent=self))
-            self.queue.put(
-                lambda: self.set_status("Błąd podczas generowania."))
-        finally:
-            self.generation_lock.release()
-            # Odśwież stan przycisków po zakończeniu
-            self.queue.put(self.update_audio_buttons_state)
-
-    def _task_convert_all(self):
-        """Worker thread task for converting all raw audio files."""
-        try:
-            self.queue.put(
-                lambda: self.progress_window.set_indeterminate(
-                    "Rozpoczynam konwersję audio...")
-            )
-
-            # Wywołaj główną funkcję konwertera, aby przetworzyła cały katalog
-            self._run_converter(is_single_file=False, single_file_path=None)
-
-            if self.cancel_generation_event.is_set():
-                raise InterruptedError("Anulowano")
-
-            self.queue.put(lambda: self.progress_window.destroy())
-            self.queue.put(
-                lambda: messagebox.showinfo(
-                    "Zakończono", "Konwersja audio zakończona.", parent=self)
-            )
-            self.queue.put(lambda: self.set_status(
-                "Konwersja audio zakończona."))
-
-            self.queue.put(lambda: self.progress_window.destroy())
-
-        except InterruptedError:
-            self.queue.put(
-                lambda: self.progress_window.destroy() if self.progress_window else None)
-            self.queue.put(lambda: messagebox.showinfo("Anulowano",
-                                                       "Proces konwersji przerwany.",
-                                                       parent=self))
-            self.queue.put(lambda: self.set_status("Konwersja anulowana."))
-        except Exception as e:
-            print(f"Błąd podczas konwersji wszystkich: {e}")
-            if self.progress_window:
-                self.queue.put(lambda: self.progress_window.destroy())
-            self.queue.put(
-                lambda e=e: messagebox.showerror("Błąd konwersji", f"Wystąpił błąd: {e}", parent=self))
-            self.queue.put(
-                lambda: self.set_status("Błąd podczas konwersji."))
-        finally:
-            # Upewnij się, że zwalniasz WŁAŚCIWĄ blokadę
-            self.conversion_lock.release()
-            # Odśwież stan przycisków po zakończeniu
-            self.queue.put(self.update_audio_buttons_state)
-
-    def _call_local_api(self, text: str, output_file: str):
-        """Helper method to call the Local API server."""
-        if not isinstance(self.tts_model, dict) or 'url' not in self.tts_model or 'session' not in self.tts_model:
-            raise ConnectionError(
-                "Klient Local API nie jest poprawnie skonfigurowany.")
-
-        api_url = self.tts_model['url']
-        session = self.tts_model['session']
-        payload = {
-            "text": text,
-            "output_file": output_file,
-        }
-        if self.active_model_name == "XTTS":
-            voice_path = self.global_config.get('xtts_voice_path', '')
-            payload["voice_file"] = voice_path
-
-        try:
-            response = session.post(
-                api_url, json=payload, timeout=90)  # Timeout
-            response.raise_for_status()  # Rzuci błąd dla 4xx/5xx
-
-            response_data = response.json()
-            if not response_data.get("message", "").startswith("TTS generated successfully"):
-                raise ConnectionError(
-                    f"API zwróciło nieoczekiwaną odpowiedź: {response_data.get('error', response.text)}")
-
-        except requests.exceptions.RequestException as e:
-            raise ConnectionError(
-                f"Błąd połączenia z Local API ({api_url}): {e}")
-        except json.JSONDecodeError:
-            raise ConnectionError(
-                f"Nieprawidłowa odpowiedź JSON z Local API: {response.text}")
 
     def export_patterns_to_csv(self):
         """Exports custom 'replace' patterns to CSV file."""
@@ -1801,6 +1564,43 @@ class SubtitleStudioApp(ctk.CTk):
         except Exception as e:
             self.set_status(f"Błąd dodawania wzorca: {e}")
 
+    def add_replace_pattern_from_selection(self, event=None):
+        """
+        Otwiera okno dodawania wzorca PODMIENIAJĄCEGO na podstawie
+        zaznaczonej linii w podglądzie (wywołane przez Ctrl+Click).
+        """
+        if self.selected_line_index is None:
+            return  # Brak zaznaczenia
+
+        try:
+            line_text = self.processed_replace[self.selected_line_index].strip(
+            )
+            if not line_text:
+                self.set_status("Pominięto (linia jest pusta).")
+                return
+
+            # Otwórz okno dodawania (nie edycji)
+            win = PatternEditorWindow(
+                self,
+                pattern_type='replace',
+                callback=self.handle_pattern_update,
+                existing_pattern=None
+            )
+
+            # Wypełnij pola tekstem z linii
+            win.ent_pattern.insert(0, line_text)
+            win.ent_replace.insert(0, line_text)
+            # Domyślnie ustaw wrażliwość na wielkość liter
+            win.var_ignore_case.set(False)
+
+            self.set_status("Otwarto edytor wzorców z zaznaczonym tekstem.")
+
+        except IndexError:
+            self.set_status(
+                "Błąd: Nie można pobrać tekstu dla zaznaczonej linii.")
+        except Exception as e:
+            self.set_status(f"Błąd otwierania edytora: {e}")
+
     def open_audio_rename_window(self):
         """Otwiera okno do masowej zmiany nazw plików audio."""
         if not self.audio_dir or not self.audio_dir.is_dir():
@@ -1813,6 +1613,63 @@ class SubtitleStudioApp(ctk.CTk):
 
         win = AudioRenameWindow(self, self.audio_dir)
         win.grab_set()
+
+    def _get_active_tts_model_name(self) -> str | None:
+        """Gets the active TTS model name from project config."""
+        proj_cfg = self._gather_project_config()
+        return proj_cfg.get('active_tts_model')
+
+    def delete_all_converted_audio(self):
+        """Usuwa wszystkie pliki .ogg z podkatalogu /ready."""
+        if not self.audio_dir or not self.audio_dir.is_dir():
+            messagebox.showwarning(
+                "Brak katalogu", "Najpierw wybierz katalog audio w menu 'Dialogi'.", parent=self)
+            return
+
+        ready_dir = self.audio_dir / "ready"
+        if not ready_dir.is_dir():
+            messagebox.showinfo(
+                "Brak folderu", f"Katalog '/ready' nie istnieje w:\n{self.audio_dir}", parent=self)
+            return
+
+        if not messagebox.askyesno("Potwierdź usunięcie",
+                                   f"Czy na pewno chcesz usunąć CAŁĄ zawartość folderu /ready?\n\n{ready_dir}\n\nSpowoduje to usunięcie wszystkich przekonwertowanych plików .ogg.",
+                                   parent=self):
+            return
+
+        self.stop_audio()
+
+        deleted_count = 0
+        errors = []
+
+        try:
+            # Bezpieczniej jest usuwać tylko pliki .ogg
+            for f in ready_dir.glob('*.ogg'):
+                try:
+                    os.remove(f)
+                    deleted_count += 1
+                except Exception as e:
+                    errors.append(f"{f.name}: {e}")
+
+            if errors:
+                messagebox.showerror("Błędy podczas usuwania",
+                                     f"Usunięto {deleted_count} plików, ale wystąpiły błędy:\n" + "\n".join(
+                                         errors),
+                                     parent=self)
+            elif deleted_count == 0:
+                messagebox.showinfo("Gotowe",
+                                    f"Folder /ready był już pusty (nie znaleziono plików .ogg).",
+                                    parent=self)
+            else:
+                messagebox.showinfo("Gotowe",
+                                    f"Pomyślnie usunięto {deleted_count} plików .ogg z folderu /ready.",
+                                    parent=self)
+
+        except Exception as e:
+            messagebox.showerror("Błąd krytyczny",
+                                 f"Nie udało się przeszukać folderu /ready:\n{e}", parent=self)
+
+        self.update_audio_buttons_state()
 
 
 if __name__ == '__main__':
