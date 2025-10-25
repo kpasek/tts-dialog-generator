@@ -72,6 +72,7 @@ Aby wygenerować nowy plik audio, kliknij przycisk `Generuj` przy danej linii.
 * ElevenLabs,
 * Google Cloud TTS,
 * XTTSv2 (lokalny model).
+* STylish TTS (localny model)
 
 ### 5. Usuwanie plików audio
 
@@ -120,7 +121,7 @@ W zakładce Ustawienia możesz określić m.in.:
 * parametry przetwarzania audio
 * host i port do lokalnego modelu XTTSv2 (jeśli używasz wersji offline).
 
-## 🧩 Instalacja i uruchamianie modelu lokalnego (XTTSv2)
+## 🧩 Instalacja i uruchamianie modelu lokalnego (XTTSv2, STylish)
 
 Zalecane jest uruchomienie projektu w środowisku wirtualnym Pythona.
 
@@ -143,6 +144,9 @@ W przypadku posiadania karty NVIDIA i chęci generowania na GPU W pierwszej kole
 pip uninstall torch torchvision torchaudio
 pip install torch torchaudio --index-url https://download.pytorch.org/whl/cu129
 ```
+
+### Tylko STylish
+Do katalogu `generators/stylish_model/checkpoint_final` należy pobrać wszystkie pliki z `.bin` z repozytorium twórcy modelu https://huggingface.co/spaces/FashionFlora/STylish-TTS-Pl/tree/main/checkpoint_final
 
 Po udanej instalacji powinno się udać uruchomić model za pomocą (w wirtualnym środowisku):
 ```bash
