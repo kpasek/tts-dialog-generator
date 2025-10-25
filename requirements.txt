@@ -17,3 +17,4 @@ elevenlabs
 pyinstaller
 Flask
 requests
+gradio

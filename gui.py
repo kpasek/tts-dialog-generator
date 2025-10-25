@@ -1389,7 +1389,7 @@ class SubtitleStudioApp(ctk.CTk):
         project_xtts_path = self.project_config.get('xtts_voice_path')
 
         return {
-            'xtts_api_url': self.global_config.get('xtts_api_url'),
+            'local_api_url': self.global_config.get('local_api_url'),
             # Użyj ścieżki projektu, jeśli istnieje; w przeciwnym razie użyj globalnej
             'xtts_voice_path': project_xtts_path or self.global_config.get('xtts_voice_path'),
             'elevenlabs_api_key': self.global_config.get('elevenlabs_api_key'),

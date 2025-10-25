@@ -8,20 +8,17 @@ else:
 import os
 from pathlib import Path
 
-# === ZMIANA: Warunkowy import TTS ===
 if is_installed('TTS'):
     from TTS.api import TTS
     from TTS.tts.configs.xtts_config import XttsConfig
     from TTS.tts.models.xtts import XttsAudioConfig, XttsArgs
     from TTS.config.shared_configs import BaseDatasetConfig
 else:
-    # Placeholdery, jeśli TTS nie jest zainstalowane
     TTS = None
     XttsConfig = None
     XttsAudioConfig = None
     XttsArgs = None
     BaseDatasetConfig = None
-# ===================================
 
 
 # Ścieżka do katalogu, w którym znajduje się ten plik (xtts.py)
@@ -78,7 +75,7 @@ class XTTSPolishTTS:
 
     @property
     def is_online(self) -> bool:
-        return False  # Model lokalny
+        return False
 
     def tts(self, text, output_path="output_polish.wav"):
         """

@@ -221,9 +221,8 @@ class GenerationManager:
             output_path = job.audio_dir / f"output1 ({identifier}).wav"
 
             try:
-                if job.tts_model_name == 'XTTS':
-                    self._call_local_api(tts_model_instance, text, str(
-                        output_path), job.tts_config)
+                if job.tts_model_name in ['XTTS', 'STylish']:
+                    self._call_local_api(tts_model_instance, text, str(output_path), job.tts_config)
                 elif isinstance(tts_model_instance, TTSBase):
                     tts_model_instance.tts(text, str(output_path))
                 else:
@@ -254,13 +253,21 @@ class GenerationManager:
         """Tworzy instancję modelu TTS na podstawie konfiguracji."""
 
         if model_name == 'XTTS':
-            api_url = config.get('xtts_api_url')
+            api_url = config.get('local_api_url')
             if not api_url:
                 raise ValueError(
                     "Brak URL dla XTTS API w konfiguracji zadania.")
             session = requests.Session()
             session.headers.update({'Content-Type': 'application/json'})
             return {'url': api_url.rstrip('/') + '/xtts/tts', 'session': session}
+        
+        if model_name == 'STylish':
+            api_url = config.get('local_api_url')
+            if not api_url:
+                raise ValueError("Brak URL dla STylish API w konfiguracji zadania.")
+            session = requests.Session()
+            session.headers.update({'Content-Type': 'application/json'})
+            return {'url': api_url.rstrip('/') + '/stylish/tts', 'session': session}
 
         elif model_name == 'ElevenLabs':
             api_key = config.get('elevenlabs_api_key')
@@ -292,7 +299,7 @@ class GenerationManager:
             response = session.post(api_url, json=payload, timeout=90)
             response.raise_for_status()
             response_data = response.json()
-            if not response_data.get("message", "").startswith("TTS generated successfully"):
+            if not response_data.get("output_file", ""):
                 raise ConnectionError(
                     f"API Error: {response_data.get('error', response.text)}")
         except requests.exceptions.RequestException as e:

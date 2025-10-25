@@ -125,21 +125,21 @@ class SettingsWindow(ctk.CTkToplevel):
                          sticky="ew", padx=10, pady=5)
 
         # Zakładka XTTS
-        tab_xtts = tts_tabview.add("XTTS (API)")  # Zmieniono nazwę
+        tab_xtts = tts_tabview.add("Local TTS (API)")  # Zmieniono nazwę
         tab_xtts.grid_columnconfigure(1, weight=1)
         # --- NOWE POLE: XTTS API URL ---
         ctk.CTkLabel(tab_xtts, text="URL serwera API:").grid(
             row=0, column=0, sticky="w", padx=10, pady=(10, 5))
-        self.xtts_api_url_var = tk.StringVar(value=self.master.global_config.get(
-            'xtts_api_url', 'http://127.0.0.1:8001'))
+        self.local_api_url_var = tk.StringVar(value=self.master.global_config.get(
+            'local_api_url', 'http://127.0.0.1:8001'))
         entry_xtts_url = ctk.CTkEntry(
-            tab_xtts, textvariable=self.xtts_api_url_var)
+            tab_xtts, textvariable=self.local_api_url_var)
         entry_xtts_url.grid(row=0, column=1, columnspan=2,
                             sticky="ew", padx=10, pady=(10, 5))
         CreateToolTip(
             entry_xtts_url, "Adres URL działającego serwera XTTS API.", wraplength=300)
         # --- Koniec nowego pola ---
-        ctk.CTkLabel(tab_xtts, text="Ścieżka głosu (.wav):").grid(
+        ctk.CTkLabel(tab_xtts, text="Ścieżka głosu XTTS (.wav):").grid(
             row=1, column=0, sticky="w", padx=10, pady=(5, 10))  # Zmieniono row na 1
         self.xtts_voice_path_var = tk.StringVar(
             value=self.master.global_config.get('xtts_voice_path', ''))
@@ -241,7 +241,7 @@ class SettingsWindow(ctk.CTkToplevel):
 
         ctk.CTkLabel(frame, text="Aktywny model TTS:").grid(
             row=2, column=0, sticky="w", padx=10, pady=10)
-        available_models = ["XTTS", "ElevenLabs",
+        available_models = ["XTTS", "STylish", "ElevenLabs",
                             "Google Cloud TTS"]  # Teraz wszystkie są "dostępne"
         saved_model = self.master.project_config.get(
             'active_tts_model', available_models[0])
@@ -328,7 +328,7 @@ class SettingsWindow(ctk.CTkToplevel):
             global_data = {
                 'start_directory': self.start_dir_var.get(),
                 'conversion_workers': workers,  # Zapisz liczbę wątków
-                'xtts_api_url': self.xtts_api_url_var.get(),  # Zapisz URL API
+                'local_api_url': self.local_api_url_var.get(),  # Zapisz URL API
                 'xtts_voice_path': new_voice_path,
                 'elevenlabs_api_key': self.el_api_key_var.get(),
                 'elevenlabs_voice_id': self.el_voice_id_var.get(),
