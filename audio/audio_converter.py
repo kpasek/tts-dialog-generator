@@ -154,20 +154,38 @@ class AudioConverter:
             final_filter_chain = speed_filter
         else:
             final_filter_chain = ""
+        
+        # Zamiast tworzyć string, tworzymy listę argumentów
+        command_list = [
+            'ffmpeg',
+            '-i', temp_file
+        ]
 
         if final_filter_chain:
-            command = f'ffmpeg -i "{temp_file}" -af "{final_filter_chain}" -c:a libvorbis -y -loglevel error "{output_file}"'
+            command_list.extend(['-af', final_filter_chain])
+            command_list.extend(['-c:a', 'libvorbis'])
         else:
-            command = f'ffmpeg -i "{temp_file}" -c copy -y -loglevel error "{output_file}"'
+            # Jeśli nie ma filtrów ani zmiany prędkości, kopiuj strumień
+            command_list.extend(['-c', 'copy'])
+        
+        command_list.extend([
+            '-y',
+            '-loglevel', 'error',
+            output_file
+        ])
 
         creation_flags = 0
         if sys.platform == "win32":
             creation_flags = subprocess.CREATE_NO_WINDOW
 
         try:
+            # Wywołujemy polecenie z `shell=False` (domyślne)
+            # przekazując listę argumentów `command_list`.
+            # Teraz flaga `creation_flags` będzie poprawnie zastosowana
+            # do procesu `ffmpeg.exe`, ukrywając jego okno.
             result = subprocess.run(
-                command,
-                shell=True,
+                command_list,
+                shell=False,  # Kluczowa zmiana!
                 check=True,
                 creationflags=creation_flags,
                 capture_output=True,
@@ -235,6 +253,8 @@ class AudioConverter:
             print(f"Nie znaleziono plików do konwersji w {audio_dir}.")
             print(
                 f"✅ Zakończono przetwarzanie wszystkich plików audio dla {audio_dir}")
+            if progress_callback:
+                progress_callback(1, 1) # Pokaż 100% jeśli nie ma zadań
             return
 
         print(
@@ -284,6 +304,10 @@ class AudioConverter:
                 print(f"✅ Zakończono przetwarzanie dla {audio_dir}.")
                 print(
                     f"Pomyślnie: {successful_count}, Nie powiodło się: {failed_count}")
+                # Upewnij się, że pasek postępu pokazuje 100% po zakończeniu
+                if progress_callback:
+                    progress_callback(total_tasks, total_tasks)
+
 
     def build_output_file_path(self, filename: str, output_dir: str) -> str:
         """
