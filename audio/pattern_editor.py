@@ -17,8 +17,8 @@ class PatternEditorWindow(ctk.CTkToplevel):
 
     def __init__(self,
                  parent,
-                 pattern_type: str,  # 'remove' lub 'replace'
-                 callback: callable,  # type: ignore
+                 pattern_type: str,
+                 callback,
                  existing_pattern: Optional[PatternItem] = None):
         super().__init__(parent)
         self.parent_app = parent
@@ -50,10 +50,10 @@ class PatternEditorWindow(ctk.CTkToplevel):
             self, placeholder_text="tekst zastępujący")
         self.ent_replace.grid(row=3, column=0, sticky="ew", padx=10)
 
-        self.var_ignore_case = tk.BooleanVar(value=True)  # Domyślnie ignoruj
-        self.chk_ignore_case = ctk.CTkCheckBox(
-            self, text="Uwzględnij wielkość liter (Aa)", variable=self.var_ignore_case)
-        self.chk_ignore_case.grid(
+        self.var_case_sensitive = tk.BooleanVar(value=True)
+        self.chk_case_sensitive = ctk.CTkCheckBox(
+            self, text="Uwzględnij wielkość liter (Aa)", variable=self.var_case_sensitive)
+        self.chk_case_sensitive.grid(
             row=4, column=0, sticky="w", padx=10, pady=10)
 
         # --- Sekcja testowania ---
@@ -108,7 +108,7 @@ class PatternEditorWindow(ctk.CTkToplevel):
             return
         self.ent_pattern.insert(0, self.existing_pattern.pattern)
         self.ent_replace.insert(0, self.existing_pattern.replace)
-        self.var_ignore_case.set(self.existing_pattern.ignore_case)
+        self.var_case_sensitive.set(self.existing_pattern.case_sensitive)
         if self.pattern_type == 'remove':
             self.ent_replace.configure(state="disabled")
 
@@ -142,7 +142,7 @@ class PatternEditorWindow(ctk.CTkToplevel):
         pattern_str = self.ent_pattern.get()
         replace_str = self.ent_replace.get()
         test_str = self.ent_test_text.get()
-        flags = re.IGNORECASE if self.var_ignore_case.get() else 0
+        flags = re.IGNORECASE if not self.var_case_sensitive.get() else 0
 
         try:
             pattern = re.compile(pattern_str, flags)
@@ -161,9 +161,9 @@ class PatternEditorWindow(ctk.CTkToplevel):
         pattern_str = self.ent_pattern.get()
         replace_str = self.ent_replace.get(
         ) if self.pattern_type == 'replace' else ""
-        ignore_case = self.var_ignore_case.get()
+        case_sensitive = self.var_case_sensitive.get()
 
-        new_pattern = PatternItem(pattern_str, replace_str, ignore_case)
+        new_pattern = PatternItem(pattern_str, replace_str, case_sensitive)
 
         # Wywołaj callback w głównym oknie
         self.callback(new_pattern, self.existing_pattern, self.pattern_type)

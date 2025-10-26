@@ -16,6 +16,7 @@ class AudioDeleterWindow(ctk.CTkToplevel):
     A modal window for batch-deleting audio files based on regex patterns
     matched against dialog lines.
     """
+
     def __init__(self, master, dialogs: List[str], audio_path: str):
         """
         Initializes the AudioDeleterWindow.
@@ -57,20 +58,25 @@ class AudioDeleterWindow(ctk.CTkToplevel):
                                                                                             padx=6)
 
         self.custom_remove_frame = ctk.CTkScrollableFrame(main_frame)
-        self.custom_remove_frame.grid(row=1, column=0, sticky="nsew", padx=6, pady=(2, 6))
+        self.custom_remove_frame.grid(
+            row=1, column=0, sticky="nsew", padx=6, pady=(2, 6))
 
         clean_inline_frame = ctk.CTkFrame(main_frame)
         clean_inline_frame.grid(row=2, column=0, sticky="ew", pady=(4, 4))
 
-        self.ent_remove_pattern = ctk.CTkEntry(clean_inline_frame, placeholder_text="regexp")
-        self.ent_remove_pattern.pack(side="left", fill="x", expand=True, padx=(4, 2))
+        self.ent_remove_pattern = ctk.CTkEntry(
+            clean_inline_frame, placeholder_text="regexp")
+        self.ent_remove_pattern.pack(
+            side="left", fill="x", expand=True, padx=(4, 2))
 
-        self.var_remove_ignore = tk.BooleanVar(value=False)
-        checkbox = ctk.CTkCheckBox(clean_inline_frame, text="Aa", variable=self.var_remove_ignore)
+        self.var_remove_case_sensitive = tk.BooleanVar(value=True)
+        checkbox = ctk.CTkCheckBox(
+            clean_inline_frame, text="Aa", variable=self.var_remove_case_sensitive)
         checkbox.pack(side="left", padx=(2, 4))
         CreateToolTip(checkbox, 'Uwzględnij wielkość znaków')
 
-        ctk.CTkButton(clean_inline_frame, text="Dodaj", command=self.add_inline_remove).pack(side="left", padx=2)
+        ctk.CTkButton(clean_inline_frame, text="Dodaj",
+                      command=self.add_inline_remove).pack(side="left", padx=2)
 
         stats_frame = ctk.CTkFrame(main_frame)
         stats_frame.grid(row=3, column=0, sticky="ew", pady=10)
@@ -79,7 +85,8 @@ class AudioDeleterWindow(ctk.CTkToplevel):
         self.lbl_lines = ctk.CTkLabel(stats_frame, text="Pasujące linie: 0")
         self.lbl_lines.grid(row=0, column=0, columnspan=2, sticky="w", padx=10)
 
-        self.lbl_files = ctk.CTkLabel(stats_frame, text="Pliki do usunięcia: 0")
+        self.lbl_files = ctk.CTkLabel(
+            stats_frame, text="Pliki do usunięcia: 0")
         self.lbl_files.grid(row=1, column=0, columnspan=2, sticky="w", padx=10)
 
         ctk.CTkButton(stats_frame, text="Przelicz", command=self.recalculate_stats).grid(row=2, column=0, padx=10,
@@ -90,7 +97,7 @@ class AudioDeleterWindow(ctk.CTkToplevel):
     def add_inline_remove(self):
         """Adds a new regex pattern from the input field to the list."""
         pattern = self.ent_remove_pattern.get()
-        case_sensitive = self.var_remove_ignore.get()
+        case_sensitive = self.var_remove_case_sensitive.get()
         if not pattern:
             return
 
@@ -114,7 +121,7 @@ class AudioDeleterWindow(ctk.CTkToplevel):
         row.pack(fill="x", pady=2, padx=2)
 
         lbl = ctk.CTkLabel(row,
-                           text=f"[{pattern_item.pattern}] {'' if pattern_item.ignore_case else '(Aa)'}")
+                           text=f"[{pattern_item.pattern}] {'' if not pattern_item.case_sensitive else '(Aa)'}")
         lbl.pack(side="left", fill="x", expand=False, padx=4)
 
         def on_delete():
@@ -141,7 +148,8 @@ class AudioDeleterWindow(ctk.CTkToplevel):
         candidates = [
             (self.audio_dir / f"output1 ({identifier}).wav", False),
             (self.audio_dir / f"output1 ({identifier}).ogg", False),
-            (self.audio_dir / f"output1 ({identifier}).mp3", False), # Dodano mp3 na wszelki wypadek
+            # Dodano mp3 na wszelki wypadek
+            (self.audio_dir / f"output1 ({identifier}).mp3", False),
             (self.audio_dir / "ready" / f"output1 ({identifier}).ogg", True),
             (self.audio_dir / "ready" / f"output2 ({identifier}).ogg", True)
         ]
@@ -159,9 +167,11 @@ class AudioDeleterWindow(ctk.CTkToplevel):
             return
 
         try:
-            compiled_patterns = [compile_pattern(p) for p in self.custom_remove]
+            compiled_patterns = [compile_pattern(
+                p) for p in self.custom_remove]
         except re.error as e:
-            messagebox.showerror("Błąd regex", f"Błąd w wyrażeniu regularnym:\n{e}", parent=self)
+            messagebox.showerror(
+                "Błąd regex", f"Błąd w wyrażeniu regularnym:\n{e}", parent=self)
             return
 
         matched_lines_count = 0
@@ -183,7 +193,8 @@ class AudioDeleterWindow(ctk.CTkToplevel):
 
         self.files_to_delete = list(files_set)
         self.lbl_lines.configure(text=f"Pasujące linie: {matched_lines_count}")
-        self.lbl_files.configure(text=f"Pliki do usunięcia: {len(self.files_to_delete)}")
+        self.lbl_files.configure(
+            text=f"Pliki do usunięcia: {len(self.files_to_delete)}")
 
     def execute_deletion(self):
         """
@@ -192,7 +203,8 @@ class AudioDeleterWindow(ctk.CTkToplevel):
         self.recalculate_stats()  # Ensure the list is up-to-date
 
         if not self.files_to_delete:
-            messagebox.showinfo("Brak plików", "Brak plików do usunięcia.", parent=self)
+            messagebox.showinfo(
+                "Brak plików", "Brak plików do usunięcia.", parent=self)
             return
 
         file_count = len(self.files_to_delete)
@@ -215,6 +227,7 @@ class AudioDeleterWindow(ctk.CTkToplevel):
                                  f"Usunięto {deleted_count} z {file_count} plików.\n\nWystąpiły błędy:\n{'; '.join(errors[:5])}",
                                  parent=self)
         else:
-            messagebox.showinfo("Gotowe", f"Pomyślnie usunięto {deleted_count} plików.", parent=self)
+            messagebox.showinfo(
+                "Gotowe", f"Pomyślnie usunięto {deleted_count} plików.", parent=self)
 
         self.recalculate_stats()  # Refresh stats (should be 0)

@@ -1,6 +1,8 @@
 from tkinter import messagebox
 from typing import List
-import re, sys, os
+import re
+import sys
+import os
 import importlib.util
 
 from app.entity import PatternItem
@@ -16,7 +18,7 @@ def compile_pattern(pat: PatternItem) -> re.Pattern:
     Returns:
         A compiled regex pattern.
     """
-    flags = re.IGNORECASE if pat.ignore_case else 0
+    flags = re.IGNORECASE if not pat.case_sensitive else 0
     return re.compile(pat.pattern, flags)
 
 

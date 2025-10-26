@@ -1,5 +1,6 @@
 from __future__ import annotations
 
+import multiprocessing
 import os.path
 import customtkinter as ctk
 import tkinter as tk
@@ -14,6 +15,15 @@ from typing import List, Optional, Tuple
 from pathlib import Path
 import threading
 import queue
+import webbrowser
+
+try:
+    from packaging import version
+    PACKAGING_AVAILABLE = True
+except ImportError:
+    PACKAGING_AVAILABLE = False
+    print("Ostrzeżenie: Biblioteka 'packaging' nie jest zainstalowana. Sprawdzanie aktualizacji będzie wyłączone.")
+    print("Aby włączyć, zainstaluj: pip install packaging")
 
 import requests
 from customtkinter import CTkFrame, CTkScrollableFrame
@@ -41,28 +51,28 @@ APP_CONFIG = Path.cwd() / ".subtitle_studio_config.json"
 MAX_COL_WIDTH = 450
 
 BUILTIN_REMOVE = [
-    (PatternItem(r"^\[[^\]]*\]+$", "", True), "Usuń całe linie [.*]"),
-    (PatternItem(r"^\<[^\>]*\>+$", "", True), "Usuń całe linie <.*>"),
-    (PatternItem(r"^\{[^\}]*\}+$", "", True), "Usuń całe linie {.*}"),
-    (PatternItem(r"^\([^\)]*\)+$", "", True), "Usuń całe linie (.*)"),
+    (PatternItem(r"^\[[^\]]*\]+$", "", False), "Usuń całe linie [.*]"),
+    (PatternItem(r"^\<[^\>]*\>+$", "", False), "Usuń całe linie <.*>"),
+    (PatternItem(r"^\{[^\}]*\}+$", "", False), "Usuń całe linie {.*}"),
+    (PatternItem(r"^\([^\)]*\)+$", "", False), "Usuń całe linie (.*)"),
     (PatternItem(r"^[A-Z\?\!\.]{,4}$", "", True), None),
-    (PatternItem(r" ", "", True), "Usuń niektóre niewidoczne znaki"),
+    (PatternItem(r" ", "", False), "Usuń niektóre niewidoczne znaki"),
 ]
 BUILTIN_REPLACE = [
-    (PatternItem(r"\[[^\]]*\]+", " ", True), "Usuń treść [.*]"),
-    (PatternItem(r"\<[^\>]*\>+", " ", True), "Usuń treść <.*>"),
-    (PatternItem(r"\{[^\}]*\}+", " ", True), "Usuń treść {.*}"),
-    (PatternItem(r"\([^\)]*\)+", " ", True), "Usuń treść (.*)"),
-    (PatternItem(r"…", "...", True), "Popraw trójkropek"),
-    (PatternItem(r"\.{2,}", ".", True), "Trójkropek > kropka"),
-    (PatternItem(r"\?!", "?", True), "?! -> ?"),
-    (PatternItem(r"\?{2,}", "?", True), "?(?)+ -> ?"),
-    (PatternItem(r"[@#$^&*\(\)\{\}]+", " ", True),
+    (PatternItem(r"\[[^\]]*\]+", " ", False), "Usuń treść [.*]"),
+    (PatternItem(r"\<[^\>]*\>+", " ", False), "Usuń treść <.*>"),
+    (PatternItem(r"\{[^\}]*\}+", " ", False), "Usuń treść {.*}"),
+    (PatternItem(r"\([^\)]*\)+", " ", False), "Usuń treść (.*)"),
+    (PatternItem(r"…", "...", False), "Popraw trójkropek"),
+    (PatternItem(r"\.{2,}", ".", False), "Trójkropek > kropka"),
+    (PatternItem(r"\?!", "?", False), "?! -> ?"),
+    (PatternItem(r"\?{2,}", "?", False), "?(?)+ -> ?"),
+    (PatternItem(r"[@#$^&*\(\)\{\}]+", " ", False),
      "Usuń znaki specjalne jak @#$"),
-    (PatternItem(r"\s{2,}", " ", True), "Zamień białe znaki na spacje"),
-    (PatternItem(r"^[-.\"\']", "", True),
+    (PatternItem(r"\s{2,}", " ", False), "Zamień białe znaki na spacje"),
+    (PatternItem(r"^[-.\"\']", "", False),
      "Usuń wiodące znaki specjalne (-.\"')"),
-    (PatternItem(r"[-\.\"\']$", "", True),
+    (PatternItem(r"[-\.\"\']$", "", False),
      "Usuń kończące znaki specjalne (-.\"')"),
 ]
 
@@ -82,6 +92,7 @@ class SubtitleStudioApp(ctk.CTk):
     Main application class for Subtitle Studio.
     Handles the main window, UI, file operations, project management, and audio interactions.
     """
+    APP_VERSION = "0.9.3"
 
     def __init__(self):
         super().__init__()
@@ -102,9 +113,9 @@ class SubtitleStudioApp(ctk.CTk):
         self.processed_replace: List[str] = []
 
         self.builtin_remove = [PatternItem(
-            p.pattern, p.replace, p.ignore_case, name) for p, name in BUILTIN_REMOVE]
+            p.pattern, p.replace, p.case_sensitive, name) for p, name in BUILTIN_REMOVE]
         self.builtin_replace = [PatternItem(
-            p.pattern, p.replace, p.ignore_case, name) for p, name in BUILTIN_REPLACE]
+            p.pattern, p.replace, p.case_sensitive, name) for p, name in BUILTIN_REPLACE]
         self.builtin_remove_state = [tk.BooleanVar(value=True, name=f"br_{i}") for i, _ in
                                      enumerate(self.builtin_remove)]
         self.builtin_replace_state = [tk.BooleanVar(value=True, name=f"bp_{i}") for i, _ in
@@ -125,12 +136,17 @@ class SubtitleStudioApp(ctk.CTk):
         self.audio_dir: Optional[Path] = None
         self.selected_line_index: Optional[int] = None
 
+        self.update_button: Optional[ctk.CTkButton] = None
+        self.latest_version_info: Optional[Tuple[str, str]] = None
+
         self._load_app_config(only_config=True)
         self.apply_theme_settings()
         self._create_menu()
         self._create_widgets()
         self._load_app_config()
         self.check_queue()
+
+        threading.Thread(target=self._check_for_updates, daemon=True).start()
 
     def mark_as_unsaved(self, *args):
         """Flags the current project as having unsaved changes and updates status."""
@@ -233,6 +249,11 @@ class SubtitleStudioApp(ctk.CTk):
         ctk.CTkButton(stats_frame, text="Zastosuj wzorce",
                       command=self.apply_processing).pack(side="left", padx=5)
 
+        self.update_button = ctk.CTkButton(stats_frame, text="Nowa wersja!",
+                                           command=self._download_update,
+                                           fg_color="#006400", hover_color="#004d00")  # Ciemna zieleń
+        self.update_button.pack(side="left", padx=5)
+        self.update_button.pack_forget()
         self.lbl_filename = ctk.CTkLabel(
             stats_frame, text="Brak wczytanego pliku")
         self.lbl_filename.pack(side="left", anchor="w", padx=5)
@@ -482,7 +503,7 @@ class SubtitleStudioApp(ctk.CTk):
         btnX = ctk.CTkButton(row, text="X", width=60, command=on_delete)
         btnX.pack(side="left", padx=4)
 
-        lbl_text = f"[{pattern_item.pattern}] -> [{pattern_item.replace}] {'' if pattern_item.ignore_case else '(Aa)'}"
+        lbl_text = f"{'' if not pattern_item.case_sensitive else '(Aa)'} [{pattern_item.pattern}] -> [{pattern_item.replace}]"
         lbl = ctk.CTkLabel(row, text=lbl_text)
         lbl.pack(side="left", fill="x", expand=False, padx=4)
         lbl.bind("<Button-1>", on_edit_click)
@@ -1058,14 +1079,11 @@ class SubtitleStudioApp(ctk.CTk):
                         continue
 
                     replace = row[1].strip() if len(row) > 1 else ""
-                    # Domyślnie ignoruj wielkość liter (True), Aa=False => case_sensitive=True
-                    ignore_case = True  # Domyślnie
+                    case_sensitive = True
                     if len(row) > 2 and row[2].strip().isdigit():
-                        # Jeśli jest 3 kolumna i jest cyfrą, traktuj jako flagę case sensitive
-                        # 0 -> ignore case (True), 1 -> case sensitive (False)
-                        ignore_case = not bool(int(row[2].strip()))
+                        case_sensitive = not bool(int(row[2].strip()))
 
-                    new_pattern = PatternItem(pattern, replace, ignore_case)
+                    new_pattern = PatternItem(pattern, replace, case_sensitive)
                     self.custom_replace.append(new_pattern)
                     self.add_row(self.custom_replace_frame,
                                  new_pattern, self.custom_replace)
@@ -1198,7 +1216,6 @@ class SubtitleStudioApp(ctk.CTk):
         del_state = "normal" if line_selected and audio_dir_set and files_exist else "disabled"
         del_all_state = del_state
 
-        # *** NOWOŚĆ: Stan dla przycisku "Edytuj linię" ***
         edit_state = "normal" if line_selected and lines_processed else "disabled"
 
         self.play_button.configure(state=play_state)
@@ -1582,7 +1599,7 @@ class SubtitleStudioApp(ctk.CTk):
                 writer = csv.writer(f, quoting=csv.QUOTE_ALL)
                 for p in self.custom_replace:
                     writer.writerow(
-                        [p.pattern, p.replace, int(not p.ignore_case)])
+                        [p.pattern, p.replace, int(p.case_sensitive)])
             messagebox.showinfo(
                 "Eksport zakończony", f"Zapisano {len(self.custom_replace)} wzorców do:\n{path}", parent=self)
         except Exception as e:
@@ -1606,10 +1623,8 @@ class SubtitleStudioApp(ctk.CTk):
             # Wyeskejpowany pattern (traktuj tekst literalnie)
             escaped_pattern = re.escape(line_text)
 
-            # Nowy wzorzec wycinający (zamiana na pusty string)
-            # Domyślnie wrażliwy na wielkość liter (ignore_case=False) dla literalnego dopasowania
             new_pattern = PatternItem(
-                pattern=escaped_pattern, replace="", ignore_case=False)
+                pattern=escaped_pattern, replace="", case_sensitive=True)
 
             # Sprawdź, czy już nie istnieje
             if any(p.pattern == new_pattern.pattern for p in self.custom_remove):
@@ -1659,7 +1674,7 @@ class SubtitleStudioApp(ctk.CTk):
             win.ent_pattern.insert(0, line_text)
             win.ent_replace.insert(0, line_text)
             # Domyślnie ustaw wrażliwość na wielkość liter
-            win.var_ignore_case.set(False)
+            win.var_case_sensitive.set(True)
 
             self.set_status("Otwarto edytor wzorców z zaznaczonym tekstem.")
 
@@ -1753,7 +1768,82 @@ class SubtitleStudioApp(ctk.CTk):
             ctk.set_appearance_mode('System')
             ctk.set_default_color_theme('blue')
 
+    def _check_for_updates(self):
+        """Sprawdza najnowszą wersję na GitHubie w osobnym wątku."""
+        if not PACKAGING_AVAILABLE:
+            return
+
+        API_URL = "https://api.github.com/repos/kpasek/tts-dialog-generator/releases/latest"
+        try:
+            # Użyj sesji z timeoutem
+            session = requests.Session()
+            response = session.get(API_URL, timeout=10)
+            response.raise_for_status()
+
+            data = response.json()
+            latest_tag = data.get('tag_name')
+
+            if not latest_tag:
+                print("Nie znaleziono tag_name w odpowiedzi API GitHub.")
+                return
+
+            # Porównywanie wersji
+            current_v = version.parse(self.APP_VERSION)
+            latest_v = version.parse(latest_tag)
+
+            if latest_v > current_v:
+                print(
+                    f"Znaleziono nową wersję: {latest_tag} (Bieżąca: {self.APP_VERSION})")
+
+                # Ustalanie linku do pobierania
+                download_url = None
+                if sys.platform == "win32":
+                    download_url = f"https://github.com/kpasek/tts-dialog-generator/releases/download/{latest_tag}/SubtitleStudioWin.zip"
+                elif sys.platform.startswith("linux"):
+                    download_url = f"https://github.com/kpasek/tts-dialog-generator/releases/download/{latest_tag}/SubtitleStudioLin.zip"
+                else:
+                    # Dla innych systemów (np. macOS) po prostu otwórz stronę releasów
+                    download_url = data.get(
+                        'html_url', "https://github.com/kpasek/tts-dialog-generator/releases")
+
+                self.latest_version_info = (latest_tag, download_url)
+
+                # Wyślij zadanie do głównego wątku (GUI)
+                self.queue.put(self._show_update_button)
+
+        except requests.exceptions.RequestException as e:
+            print(
+                f"Błąd podczas sprawdzania aktualizacji (prawdopodobnie brak internetu): {e}")
+        except version.InvalidVersion:
+            print(
+                f"Błąd parsowania wersji: {self.APP_VERSION} lub {latest_tag}")
+        except Exception as e:
+            print(f"Nieoczekiwany błąd w _check_for_updates: {e}")
+
+    def _show_update_button(self):
+        """Wywoływane z kolejki GUI, aby pokazać przycisk aktualizacji."""
+        if self.latest_version_info and self.update_button:
+            version_name, download_url = self.latest_version_info
+            self.update_button.configure(text=f"Nowa Wersja! ({version_name})")
+            # Użyj .pack() aby go pokazać, zachowując kolejność
+            self.update_button.pack(side="left", padx=5)
+            # Przesuń lbl_filename na lewo od przycisków po prawej
+            self.lbl_filename.pack_configure(side="left", anchor="w", padx=5)
+
+    def _download_update(self):
+        """Otwiera przeglądarkę z linkiem do pobrania nowej wersji."""
+        if self.latest_version_info:
+            version_name, download_url = self.latest_version_info
+            print(f"Otwieram przeglądarkę z linkiem: {download_url}")
+            try:
+                webbrowser.open(download_url, new=2)
+            except Exception as e:
+                print(f"Nie udało się otworzyć przeglądarki: {e}")
+                messagebox.showerror(
+                    "Błąd", f"Nie udało się otworzyć linku:\n{download_url}", parent=self)
+
 
 if __name__ == '__main__':
+    multiprocessing.freeze_support()
     app = SubtitleStudioApp()
     app.mainloop()

@@ -5,7 +5,7 @@ from dataclasses import dataclass, asdict
 class PatternItem:
     pattern: str
     replace: str = ""
-    ignore_case: bool = True,
+    case_sensitive: bool = True,
     name: str | None = None
 
     def to_json(self):
@@ -13,4 +13,4 @@ class PatternItem:
 
     @classmethod
     def from_json(cls, d):
-        return cls(d.get("pattern", ""), d.get("replace", ""), d.get("ignore_case", True), d.get("name", None))
+        return cls(d.get("pattern", ""), d.get("replace", ""), d.get("case_sensitive", True), d.get("name", None))
