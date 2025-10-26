@@ -18,3 +18,5 @@ pyinstaller
 Flask
 requests
 gradio
+nnAudio
+munch

@@ -11,9 +11,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from generators.stylish import StylishTTS
 from  generators.tts_base import TTSBase
 from generators.xtts import XTTSPolishTTS
-from app.utils import is_installed
 
-TORCH_INSTALLED = is_installed("torch")
 
 # --- Rejestr modeli ---
 MODEL_REGISTRY = {

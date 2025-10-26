@@ -1,24 +1,13 @@
-from app.utils import is_installed
-
-if is_installed('torch'):
-    import torch
-else:
-    torch = None  # Zapewnij placeholder
+import torch
 
 import os
 from pathlib import Path
 
-if is_installed('TTS'):
-    from TTS.api import TTS
-    from TTS.tts.configs.xtts_config import XttsConfig
-    from TTS.tts.models.xtts import XttsAudioConfig, XttsArgs
-    from TTS.config.shared_configs import BaseDatasetConfig
-else:
-    TTS = None
-    XttsConfig = None
-    XttsAudioConfig = None
-    XttsArgs = None
-    BaseDatasetConfig = None
+from TTS.api import TTS
+from TTS.tts.configs.xtts_config import XttsConfig
+from TTS.tts.models.xtts import XttsAudioConfig, XttsArgs
+from TTS.config.shared_configs import BaseDatasetConfig
+
 
 
 # Ścieżka do katalogu, w którym znajduje się ten plik (xtts.py)
@@ -37,8 +26,6 @@ class XTTSPolishTTS:
         Args:
             voice_path: Path to the .wav file to be used for voice cloning.
         """
-        if not is_installed('torch') or TTS is None:
-            raise ImportError("Pakiety 'torch' lub 'TTS' nie są zainstalowane. XTTS jest niedostępny.")
 
         torch.serialization.add_safe_globals([
             XttsConfig,
