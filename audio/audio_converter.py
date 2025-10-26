@@ -154,7 +154,7 @@ class AudioConverter:
             final_filter_chain = speed_filter
         else:
             final_filter_chain = ""
-        
+
         # Zamiast tworzyć string, tworzymy listę argumentów
         command_list = [
             'ffmpeg',
@@ -167,7 +167,7 @@ class AudioConverter:
         else:
             # Jeśli nie ma filtrów ani zmiany prędkości, kopiuj strumień
             command_list.extend(['-c', 'copy'])
-        
+
         command_list.extend([
             '-y',
             '-loglevel', 'error',
@@ -254,7 +254,7 @@ class AudioConverter:
             print(
                 f"✅ Zakończono przetwarzanie wszystkich plików audio dla {audio_dir}")
             if progress_callback:
-                progress_callback(1, 1) # Pokaż 100% jeśli nie ma zadań
+                progress_callback(1, 1)  # Pokaż 100% jeśli nie ma zadań
             return
 
         print(
@@ -291,7 +291,7 @@ class AudioConverter:
                     print(
                         f"NIE POWIODŁO SIĘ (Błąd 'future'): {input_file} -> {e}")
 
-                if progress_callback:
+                if progress_callback and successful_count % 20 == 0:
                     try:
                         progress_callback(i + 1, total_tasks)
                     except Exception as e:
@@ -307,7 +307,6 @@ class AudioConverter:
                 # Upewnij się, że pasek postępu pokazuje 100% po zakończeniu
                 if progress_callback:
                     progress_callback(total_tasks, total_tasks)
-
 
     def build_output_file_path(self, filename: str, output_dir: str) -> str:
         """
