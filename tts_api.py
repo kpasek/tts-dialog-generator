@@ -3,10 +3,10 @@ import sys
 from pathlib import Path
 from flask import Flask, request, jsonify, send_file
 import argparse
-import re  # <-- Nowy import
-import uuid  # <-- Nowy import
-from pydub import AudioSegment  # <-- Nowy import
-from pydub.silence import detect_nonsilent  # <-- Nowy import
+import re
+import uuid
+from pydub import AudioSegment
+from pydub.silence import detect_nonsilent
 
 # Ensure local imports work
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
@@ -29,7 +29,6 @@ tts_model: TTSBase | None = None
 current_model_name: str | None = None
 current_voice_path: Path | None = None
 
-# --- Nowa funkcja pomocnicza: Dzielenie tekstu ---
 def split_text(text: str, max_len: int = 200) -> list[str]:
     """
     Dzieli tekst na fragmenty <= max_len, szanując granice zdań i fraz.
@@ -43,20 +42,16 @@ def split_text(text: str, max_len: int = 200) -> list[str]:
     p1_delims = re.compile(r'([.?!…])')
     # Priorytet 2: Przecinki i myślniki
     p2_delims = re.compile(r'([,-])')
+    p3_delims = re.compile(r'( )')
     
     base_units = []
-    
-    # 2. Spróbuj podzielić wg Priorytetu 1
     if p1_delims.search(text):
         parts = p1_delims.split(text)
-    # 3. Jeśli brak P1, spróbuj podzielić wg Priorytetu 2
     elif p2_delims.search(text):
         parts = p2_delims.split(text)
-    # 4. Jeśli brak jakichkolwiek delimiterów, podziel "na twardo"
     else:
-        return [text[i:i + max_len] for i in range(0, len(text), max_len)]
-    
-    # 5. Złóż części z powrotem ( ['Tekst', '.'] -> ['Tekst.'] )
+        parts = p3_delims.split(text)
+
     temp_units = []
     for i in range(0, len(parts) - 1, 2):
         unit = (parts[i] + parts[i+1]).strip()
@@ -65,11 +60,9 @@ def split_text(text: str, max_len: int = 200) -> list[str]:
     if len(parts) % 2 == 1 and parts[-1].strip():
         temp_units.append(parts[-1].strip())
 
-    # 6. Sprawdź, czy któraś jednostka bazowa nadal jest za długa
     final_base_units = []
     for unit in temp_units:
         if len(unit) > max_len:
-            # Ta jednostka jest za długa. Spróbuj ją podzielić wg P2 (jeśli użyliśmy P1)
             if p1_delims.search(text) and p2_delims.search(unit):
                 sub_parts = p2_delims.split(unit)
                 temp_sub_units = []
@@ -79,27 +72,23 @@ def split_text(text: str, max_len: int = 200) -> list[str]:
                         temp_sub_units.append(sub_unit)
                 if len(sub_parts) % 2 == 1 and sub_parts[-1].strip():
                     temp_sub_units.append(sub_parts[-1].strip())
-                
-                # Sprawdź te pod-jednostki (na wypadek bardzo długiej frazy)
+
                 for su in temp_sub_units:
                     if len(su) > max_len:
-                        # Ostateczność: twarde cięcie
                         final_base_units.extend([su[i:i + max_len] for i in range(0, len(su), max_len)])
                     else:
                         final_base_units.append(su)
             else:
-                # Brak P2 lub P2 już użyte, twarde cięcie
                 final_base_units.extend([unit[i:i + max_len] for i in range(0, len(unit), max_len)])
         else:
             final_base_units.append(unit)
-            
-    # 7. Grupuj jednostki bazowe (implementacja "jak najmniej podziałów")
+
     grouped_chunks = []
     current_chunk = ""
     for unit in final_base_units:
         if not current_chunk:
             current_chunk = unit
-        elif len(current_chunk) + 1 + len(unit) <= max_len: # +1 dla spacji
+        elif len(current_chunk) + 1 + len(unit) <= max_len:
             current_chunk += " " + unit
         else:
             grouped_chunks.append(current_chunk)
@@ -110,13 +99,11 @@ def split_text(text: str, max_len: int = 200) -> list[str]:
 
     return grouped_chunks
 
-# --- Nowa funkcja pomocnicza: Przycinanie ciszy ---
-
 
 def trim_silence(audio: AudioSegment, silence_thresh_db: int = -40, min_silence_ms: int = 1350) -> AudioSegment:
     """
     Przycina ciszę z początku i końca segmentu audio.
-    Domyślny próg -40dB i 100ms ciszy.
+    Domyślny próg -40dB i 1350ms ciszy.
     """
     nonsilent_parts = detect_nonsilent(
         audio,
@@ -133,7 +120,6 @@ def trim_silence(audio: AudioSegment, silence_thresh_db: int = -40, min_silence_
     return audio[start_trim:end_trim] # type: ignore
 
 
-# --- Helper: inicjalizacja modelu ---
 def initialize_model(model_name: str, voice_file: str | None):
     global tts_model, current_model_name, current_voice_path
 
@@ -159,7 +145,6 @@ def initialize_model(model_name: str, voice_file: str | None):
     return True, f"Model '{model_name}' already loaded."
 
 
-# --- Endpoint ogólny (ZMODYFIKOWANY) ---
 @app.route("/<model_name>/tts", methods=["POST"])
 def tts_endpoint(model_name: str):
     if not request.is_json:
@@ -182,39 +167,37 @@ def tts_endpoint(model_name: str):
     if tts_model is None:
         return jsonify({"error": "TTS model is not initialized."}), 500
     try:
-        MAX_CHARS = 200 # Limit znaków
+        MAX_CHARS = 200
         generated_path: Path | None = None
 
         if len(text) <= MAX_CHARS:
-            # Oryginalne zachowanie dla krótkich tekstów
             print(f"[{model_name}] Generating single TTS → {final_output_path}")
 
             generated_path = Path(tts_model.tts(text, str(final_output_path)))
         else:
-            # Nowa logika dla długich tekstów
+
             print(f"[{model_name}] Text > {MAX_CHARS} chars. Splitting...")
             text_chunks = split_text(text, MAX_CHARS)
             print(f"[{model_name}] Split into {len(text_chunks)} chunks.")
             
             audio_clips = []
-            # Tworzymy tymczasowy folder na części
+
             temp_dir = final_output_path.parent / f"temp_{uuid.uuid4().hex[:8]}"
             temp_dir.mkdir(exist_ok=True)
             
-            # Domyślny format (jeśli brak rozszerzenia)
+
             file_format = final_output_path.suffix.lstrip('.')
             if not file_format:
                 file_format = "wav" 
 
             try:
                 for i, chunk in enumerate(text_chunks):
-                    # Unikalna nazwa pliku tymczasowego
+
                     temp_file_name = f"part_{i:03d}_{uuid.uuid4().hex[:6]}.{file_format}"
                     temp_file_path = temp_dir / temp_file_name
                     
                     print(f"[{model_name}] Generating chunk {i+1}/{len(text_chunks)} → {temp_file_path}")
-                    
-                    # Generowanie części
+
                     chunk_path_str = tts_model.tts(chunk, str(temp_file_path))
                     generated_chunk_path = Path(chunk_path_str)
                     
@@ -240,13 +223,11 @@ def tts_endpoint(model_name: str):
                 generated_path = final_output_path
 
             finally:
-                # Sprzątanie plików tymczasowych
                 if temp_dir.exists():
                     for f in temp_dir.glob('*'):
                         os.remove(f)
                     temp_dir.rmdir()
 
-        # Reszta funkcji bez zmian
         return_audio = request.args.get("return_audio", "false").lower() == "true"
 
         if return_audio and generated_path and generated_path.exists():
@@ -264,7 +245,6 @@ def tts_endpoint(model_name: str):
         return jsonify({"error": f"Error during TTS generation: {e}", "trace": traceback.format_exc()}), 500
 
 
-# --- Start serwera ---
 if __name__ == "__main__":
     parser = argparse.ArgumentParser(description="Multi-Model TTS API Server")
     parser.add_argument("--host", default="127.0.0.1")
