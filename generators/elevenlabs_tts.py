@@ -1,15 +1,8 @@
 from typing import Optional, List
 from .tts_base import TTSBase
-from app.utils import is_installed
 
-if is_installed('elevenlabs'):
-    from elevenlabs.client import ElevenLabs
-    from elevenlabs import Voice, save # Import save
-else:
-    # Zapewnij typy zastępcze
-    ElevenLabs = None
-    Voice = None
-    save = None
+raise Exception(
+    "Elevenlabs generator is not yet implemented. Please implement it before use.")
 
 
 class ElevenLabsTTS(TTSBase):

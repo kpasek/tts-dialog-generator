@@ -1,14 +1,8 @@
 from typing import Optional
 from .tts_base import TTSBase
-from app.utils import is_installed
 
-if is_installed('google.cloud.texttospeech'):
-    import google.cloud.texttospeech as tts
-else:
-    # Pozwól na import pliku, ale rzuć błąd przy próbie użycia
-    tts = None
-
-
+raise Exception(
+    "Google Cloud TTS generator is not yet implemented. Please implement it before use.")
 class GoogleCloudTTS(TTSBase):
     """
     TTS implementation using Google Cloud Text-to-Speech API.
@@ -23,8 +17,6 @@ class GoogleCloudTTS(TTSBase):
             voice_name: The name of the voice to use (e.g., 'pl-PL-Wavenet-B').
             language_code: The language code (e.g., 'pl-PL').
         """
-        if tts is None:
-            raise ImportError("Pakiet 'google-cloud-texttospeech' nie jest zainstalowany.")
 
         self.credentials_path = credentials_path
         self.voice_name = voice_name

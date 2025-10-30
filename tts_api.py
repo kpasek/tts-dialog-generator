@@ -111,6 +111,8 @@ def split_text(text: str, max_len: int = 200) -> list[str]:
     return grouped_chunks
 
 # --- Nowa funkcja pomocnicza: Przycinanie ciszy ---
+
+
 def trim_silence(audio: AudioSegment, silence_thresh_db: int = -40, min_silence_ms: int = 1350) -> AudioSegment:
     """
     Przycina ciszę z początku i końca segmentu audio.
