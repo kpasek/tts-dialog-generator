@@ -81,6 +81,7 @@ def tts_endpoint(model_name: str):
             return send_file(generated_path, as_attachment=True, download_name=generated_path.name)
         return jsonify({"message": msg, "output_file": str(generated_path)}), 200
     except Exception as e:
+        print(e)
         return jsonify({"error": f"Error during TTS generation: {e}"}), 500
 
 

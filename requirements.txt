@@ -10,7 +10,6 @@ torch
 torchaudio
 torchcodec
 transformers==4.49.0
-TTS==0.22.0
 pygame
 google-cloud-texttospeech
 elevenlabs
@@ -20,3 +19,5 @@ requests
 gradio
 nnAudio
 munch
+coqui-tts
+coqpit-config
