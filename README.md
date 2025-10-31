@@ -4,7 +4,17 @@
 
 Zalecane jest uruchomienie projektu w środowisku wirtualnym Pythona.
 
+Instalacja python3.12 dla windows 10/11
 ```bash
+winget install Python.Python.3.12
+pip install virtualenv
+```
+
+Sklonuj repozytorium:
+```bash
+git clone https://github.com/kpasek/tts-dialog-generator.git
+cd tts-dialog-generator
+
 virtualenv -p python3.12 .venv
 source .venv/bin/activate # w linuxie
 .\.venv\Scripts\activate.ps1 # windows - powershell
