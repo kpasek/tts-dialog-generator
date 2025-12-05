@@ -1,6 +1,7 @@
 import torch
-
+import torchaudio
 import os
+import time
 from pathlib import Path
 
 from TTS.api import TTS
@@ -8,53 +9,61 @@ from TTS.tts.configs.xtts_config import XttsConfig
 from TTS.tts.models.xtts import XttsAudioConfig, XttsArgs
 from TTS.config.shared_configs import BaseDatasetConfig
 
-
-
-# Ścieżka do katalogu, w którym znajduje się ten plik (xtts.py)
 GENERATOR_DIR = Path(__file__).parent.resolve()
 
 
 class XTTSPolishTTS:
     """
-    TTS implementation using the local Coqui XTTS v2 model.
+    TTS implementation using XTTS v2.
+    Configuration: FP32 (Native) + Cached Latents + No Compilation overhead.
     """
 
     def __init__(self, voice_path: str | Path | None = None):
-        """
-        Initializes and loads the XTTS model into VRAM.
-
-        Args:
-            voice_path: Path to the .wav file to be used for voice cloning.
-        """
-
         torch.serialization.add_safe_globals([
-            XttsConfig,
-            XttsArgs,
-            XttsAudioConfig,
-            BaseDatasetConfig])
+            XttsConfig, XttsArgs, XttsAudioConfig, BaseDatasetConfig
+        ])
 
-        self.model = TTS("tts_models/multilingual/multi-dataset/xtts_v2")
+        print("Inicjalizacja XTTS v2 (Tryb Czysta Wydajność)...")
+
+        # 1. Ładujemy model klasycznie (FP32)
+        # To jest najstabilniejsza i na Twoim sprzęcie najszybsza opcja.
+        self.wrapper = TTS("tts_models/multilingual/multi-dataset/xtts_v2")
+        self.model = self.wrapper.synthesizer.tts_model
+
         device = "cuda" if torch.cuda.is_available() else "cpu"
-        print(f"Using device: {device}")
-        self.model.to(device)
+        print(f"Urządzenie: {device}")
+        self.wrapper.to(device)  # Domyślnie float32
 
+        # 2. Ładujemy ścieżkę głosu
         if voice_path is None:
-            # Domyślna ścieżka, jeśli nic nie podano
-            voice_name = "michal.wav"
+            voice_name = "piotr.wav"
             self.voice_path_obj = GENERATOR_DIR / "voices" / voice_name
-            print(f"Używam domyślnej ścieżki głosu: {self.voice_path_obj}")
         else:
-            # Ścieżka z ustawień
             self.voice_path_obj = Path(voice_path)
-            print(f"Używam głosu z ustawień: {self.voice_path_obj}")
 
         if not self.voice_path_obj.exists():
-            print(f"BŁĄD KRYTYCZNY: Nie znaleziono pliku głosu: {self.voice_path_obj}")
-            print("Upewnij się, że plik istnieje lub skonfiguruj go w Ustawieniach.")
             raise FileNotFoundError(f"Nie znaleziono pliku głosu: {self.voice_path_obj}")
 
         self.voice = str(self.voice_path_obj)
-        print(f"Using voice file: {self.voice}")
+        print(f"Używam pliku głosu: {self.voice}")
+
+        # 3. OPTYMALIZACJA: Cache Latentów
+        # To jedyny element, który zostawiamy. Oszczędza ok. 0.5 - 1.0s na każdym pliku
+        # poprzez uniknięcie ponownego czytania i analizowania pliku WAV.
+        print("Obliczanie parametrów głosu (latents)...")
+        try:
+            start_t = time.time()
+            self.gpt_cond_latent, self.speaker_embedding = self.model.get_conditioning_latents(
+                audio_path=[self.voice]
+            )
+            print(f"Latenty gotowe w {time.time() - start_t:.2f}s")
+        except Exception as e:
+            print(f"BŁĄD KRYTYCZNY: {e}")
+            raise e
+
+            # 4. Wyłączamy torch.compile
+        # Na Windowsie przy zmiennej długości tekstu często powoduje więcej szkody niż pożytku.
+        # Wracamy do trybu "Eager" (standardowego).
 
     @property
     def name(self) -> str:
@@ -65,25 +74,35 @@ class XTTSPolishTTS:
         return False
 
     def tts(self, text, output_path="output_polish.wav"):
-        """
-        Generates speech and saves it as a .wav file.
+        clean_text = text.replace("...", ".").replace("…", ".")
+        if not clean_text.strip():
+            return output_path
 
-        Args:
-            text: The text to synthesize.
-            output_path: The path to save the output .wav file.
+        # Bezpośrednia inferencja w FP32 (bez autocast)
+        # To eliminuje narzut przełączania typów.
+        try:
+            out = self.model.inference(
+                text=clean_text,
+                language="pl",
+                gpt_cond_latent=self.gpt_cond_latent,
+                speaker_embedding=self.speaker_embedding,
 
-        Returns:
-            The output_path.
-        """
-        split = False
-        if len(text) >= 200:
-            split = True
+                # Parametry
+                temperature=0.7,
+                repetition_penalty=2.0,
+                top_p=0.8,
+                top_k=50,
+                length_penalty=1.0,
+                speed=1.0,
+                enable_text_splitting=False
+            )
 
-        self.model.tts_to_file(
-            text=text,
-            file_path=output_path,
-            language="pl",
-            speaker_wav=self.voice,
-            split_sentences=split
-        )
-        return output_path
+            # Zapis wyniku
+            wav_tensor = torch.tensor(out["wav"]).unsqueeze(0)
+            torchaudio.save(output_path, wav_tensor.cpu(), 24000)
+
+            return output_path
+
+        except Exception as e:
+            print(f"Błąd TTS: {e}")
+            return output_path

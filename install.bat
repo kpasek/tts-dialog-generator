@@ -5,7 +5,7 @@ REM ---------------------------------------------
 REM Ustawienia
 REM ---------------------------------------------
 set REPO_URL=https://github.com/kpasek/tts-dialog-generator.git
-set REPO_DIR=tts-dialog-generator
+set REPO_DIR=.
 set PYTHON_VERSION=3.11
 set VENV_DIR=.venv
 
