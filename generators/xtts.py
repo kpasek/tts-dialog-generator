@@ -1,3 +1,5 @@
+import re
+
 import torch
 import torchaudio
 import os
@@ -77,7 +79,7 @@ class XTTSPolishTTS:
         clean_text = text.replace("...", ".").replace("…", ".")
         if not clean_text.strip():
             return output_path
-
+        clean_text = re.sub(f"\.$", "", clean_text)
         # Bezpośrednia inferencja w FP32 (bez autocast)
         # To eliminuje narzut przełączania typów.
         try:
