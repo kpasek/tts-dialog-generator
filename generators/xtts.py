@@ -79,7 +79,7 @@ class XTTSPolishTTS:
         clean_text = text.replace("...", ".").replace("…", ".")
         if not clean_text.strip():
             return output_path
-        clean_text = re.sub(f"\.$", "", clean_text)
+        clean_text = re.sub(r"\.$", "", clean_text)
         # Bezpośrednia inferencja w FP32 (bez autocast)
         # To eliminuje narzut przełączania typów.
         try:
