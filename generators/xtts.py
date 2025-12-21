@@ -30,7 +30,7 @@ class XTTSPolishTTS:
         # 1. Ładujemy model klasycznie (FP32)
         # To jest najstabilniejsza i na Twoim sprzęcie najszybsza opcja.
         self.wrapper = TTS("tts_models/multilingual/multi-dataset/xtts_v2")
-        self.model = self.wrapper.synthesizer.tts_model
+        self.model = self.wrapper.synthesizer.tts_model # type: ignore
 
         device = "cuda" if torch.cuda.is_available() else "cpu"
         print(f"Urządzenie: {device}")
@@ -55,7 +55,7 @@ class XTTSPolishTTS:
         print("Obliczanie parametrów głosu (latents)...")
         try:
             start_t = time.time()
-            self.gpt_cond_latent, self.speaker_embedding = self.model.get_conditioning_latents(
+            self.gpt_cond_latent, self.speaker_embedding = self.model.get_conditioning_latents( # type: ignore
                 audio_path=[self.voice]
             )
             print(f"Latenty gotowe w {time.time() - start_t:.2f}s")
@@ -77,25 +77,26 @@ class XTTSPolishTTS:
 
     def tts(self, text, output_path="output_polish.wav"):
         clean_text = text.replace("...", ".").replace("…", ".")
+        clean_text = clean_text.strip('.')
         if not clean_text.strip():
             return output_path
         if not re.match(r".*[\.\!\?]$", clean_text):
-            clean_text += '.'
+            clean_text += ','
+            
+        clean_text += ' ' 
         try:
-            out = self.model.inference(
-                text=clean_text,
-                language="pl",
-                gpt_cond_latent=self.gpt_cond_latent,
-                speaker_embedding=self.speaker_embedding,
-
-                # Parametry
-                temperature=0.7,
-                repetition_penalty=2.0,
-                top_p=0.8,
-                top_k=50,
-                length_penalty=1.0,
-                speed=1.0,
-                enable_text_splitting=False
+            out = self.model.inference( # type: ignore
+                text=clean_text, # type: ignore
+                language="pl", # type: ignore
+                gpt_cond_latent=self.gpt_cond_latent, # type: ignore
+                speaker_embedding=self.speaker_embedding, # type: ignore
+                temperature=0.6, # type: ignore
+                repetition_penalty=2.0, # type: ignore
+                top_p=0.8, # type: ignore
+                top_k=50, # type: ignore
+                length_penalty=1.0, # type: ignore
+                speed=1.0, # type: ignore
+                enable_text_splitting=False # type: ignore
             )
 
             # Zapis wyniku

@@ -175,8 +175,10 @@ def create_app(path_converter):
 
         success, msg = initialize_model(model_name.lower(), voice_file)
         if not success:
+            print(f"BŁĄD INICJALIZACJI: {msg}")
             return jsonify({"error": msg}), 500
         if tts_model is None:
+            print("BŁĄD: Model TTS nie jest zainicjalizowany.")
             return jsonify({"error": "TTS model is not initialized."}), 500
         try:
             MAX_CHARS = 200
@@ -224,6 +226,7 @@ def create_app(path_converter):
                             print(f"[{model_name}] WARNING: Chunk {i+1} failed to generate or path was not returned.")
                     
                     if not audio_clips:
+                        print(f"[{model_name}] ERROR: No audio chunks were generated.")
                         return jsonify({"error": "Failed to generate any audio chunks."}), 500
                     
                     # Łączenie klipów
@@ -248,6 +251,7 @@ def create_app(path_converter):
                 return send_file(generated_path, as_attachment=True, download_name=generated_path.name)
             
             if not generated_path or not generated_path.exists():
+                print(f"BŁĄD: Plik audio końcowy nie został utworzony.")
                 return jsonify({"error": "Final audio file was not created."}), 500
             print(f"Audio gotowe: {time.time() - start_t:.2f}s")
             return jsonify({"message": msg, "output_file": str(generated_path)}), 200
