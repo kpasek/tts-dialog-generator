@@ -1,5 +1,6 @@
 import os
 import sys
+import shutil
 from pathlib import Path
 import time
 from flask import Flask, request, jsonify, send_file
@@ -25,7 +26,6 @@ MODEL_REGISTRY = {
 }
 
 # --- Globals ---
-# Globals are managed within the module scope to be shared across requests
 tts_model: TTSBase | None = None
 current_model_name: str | None = None
 current_voice_path: Path | None = None
@@ -33,16 +33,12 @@ current_voice_path: Path | None = None
 
 def split_text(text: str, max_len: int = 200) -> list[str]:
     """
-    Dzieli tekst na fragmenty <= max_len, szanując granice zdań i fraz.
-    Implementuje logikę "minimalnej liczby podziałów".
+    Dzieli tekst na fragmenty <= max_len.
     """
     if len(text) <= max_len:
         return [text]
 
-    # 1. Zdefiniuj delimitery
-    # Priorytet 1: Znaki końca zdania
     p1_delims = re.compile(r'([.?!…])')
-    # Priorytet 2: Przecinki i myślniki
     p2_delims = re.compile(r'([,-])')
     p3_delims = re.compile(r'( )')
     
@@ -103,10 +99,6 @@ def split_text(text: str, max_len: int = 200) -> list[str]:
 
 
 def trim_silence(audio: AudioSegment, silence_thresh_db: int = -40, min_silence_ms: int = 1350) -> AudioSegment:
-    """
-    Przycina ciszę z początku i końca segmentu audio.
-    Domyślny próg -40dB i 1350ms ciszy.
-    """
     nonsilent_parts = detect_nonsilent(
         audio,
         min_silence_len=min_silence_ms,
@@ -114,7 +106,7 @@ def trim_silence(audio: AudioSegment, silence_thresh_db: int = -40, min_silence_
     )
     
     if not nonsilent_parts:
-        return audio # Zwróć oryginał, jeśli wszystko jest ciszą
+        return audio
 
     start_trim = nonsilent_parts[0][0]
     end_trim = nonsilent_parts[-1][1]
@@ -147,7 +139,12 @@ def initialize_model(model_name: str, voice_file: str | None):
     return True, f"Model '{model_name}' already loaded."
 
 
-def create_app(path_converter):
+def create_app(path_converter, staging_dir: Path | None = None):
+    """
+    path_converter: funkcja do zmiany ścieżek (Windows -> WSL)
+    staging_dir: opcjonalna ścieżka do katalogu szybkiego zapisu (Linux native). 
+                 Jeśli None, zapisuje bezpośrednio do celu.
+    """
     app = Flask(__name__)
 
     @app.route("/<model_name>/tts", methods=["POST"])
@@ -157,29 +154,40 @@ def create_app(path_converter):
 
         data = request.get_json()
         text = data.get("text")
-        print(f"Generuje: {text}")
         
-        # APPLY PATH CONVERSION HERE
+        # 1. Ustalanie docelowej ścieżki (po konwersji /mnt/d/...)
         output_file_raw = data.get("output_file")
-        output_file = path_converter(output_file_raw) if output_file_raw else None
+        real_output_file = path_converter(output_file_raw) if output_file_raw else None
         
         voice_file_raw = data.get("voice_file")
         voice_file = path_converter(voice_file_raw) if voice_file_raw else None
 
-        if not text or not output_file:
+        if not text or not real_output_file:
             return jsonify({"error": "Missing 'text' or 'output_file'"}), 400
 
-        final_output_path = Path(output_file)
-        # Ensure directory exists (handling WSL paths correctly)
-        final_output_path.parent.mkdir(parents=True, exist_ok=True)
+        real_output_path = Path(real_output_file)
+        
+        try:
+            real_output_path.parent.mkdir(parents=True, exist_ok=True)
+        except OSError as e:
+            print(f"Cannot create destination directory: {e}")
+            return jsonify({"error": f"Cannot create destination directory: {e}"}), 500
+
+        if staging_dir:
+            staging_filename = f"{uuid.uuid4().hex[:8]}_{real_output_path.name}"
+            working_path = staging_dir / staging_filename
+            print(f"🚀 [Staging Strategy] Generating locally to: {working_path}")
+        else:
+            working_path = real_output_path
 
         success, msg = initialize_model(model_name.lower(), voice_file)
         if not success:
-            print(f"BŁĄD INICJALIZACJI: {msg}")
+            print(f"Model initialization error: {msg}")
             return jsonify({"error": msg}), 500
         if tts_model is None:
-            print("BŁĄD: Model TTS nie jest zainicjalizowany.")
+            print("Critical Error: tts_model is None after initialization.")
             return jsonify({"error": "TTS model is not initialized."}), 500
+        
         try:
             MAX_CHARS = 200
             generated_path: Path | None = None
@@ -187,57 +195,51 @@ def create_app(path_converter):
             start_t = time.time()
 
             if len(text) <= MAX_CHARS:
-                print(f"[{model_name}] Generating single TTS → {final_output_path}")
-
-                generated_path = Path(tts_model.tts(text, str(final_output_path)))
+                print(f"[{model_name}] Generating single TTS → {working_path}")
+                # Model zapisuje do working_path
+                generated_path = Path(tts_model.tts(text, str(working_path)))
             else:
-
                 print(f"[{model_name}] Text > {MAX_CHARS} chars. Splitting...")
                 text_chunks = split_text(text, MAX_CHARS)
                 print(f"[{model_name}] Split into {len(text_chunks)} chunks.")
                 
                 audio_clips = []
-
-                temp_dir = final_output_path.parent / f"temp_{uuid.uuid4().hex[:8]}"
-                temp_dir.mkdir(exist_ok=True)
                 
+                # Temp dir tworzymy względem working_path. 
+                # Jeśli working_path jest na Linuxie (staging), temp też tam będzie (SZYBKO!)
+                temp_dir = working_path.parent / f"temp_{uuid.uuid4().hex[:8]}"
+                temp_dir.mkdir(exist_ok=True)
 
-                file_format = final_output_path.suffix.lstrip('.')
+                file_format = working_path.suffix.lstrip('.')
                 if not file_format:
                     file_format = "wav" 
 
                 try:
                     for i, chunk in enumerate(text_chunks):
-
                         temp_file_name = f"part_{i:03d}_{uuid.uuid4().hex[:6]}.{file_format}"
                         temp_file_path = temp_dir / temp_file_name
                         
-                        print(f"[{model_name}] Generating chunk {i+1}/{len(text_chunks)} → {temp_file_path}")
-
                         chunk_path_str = tts_model.tts(chunk, str(temp_file_path))
                         generated_chunk_path = Path(chunk_path_str)
                         
                         if generated_chunk_path.exists():
-                            # Wczytaj, przytnij ciszę i dodaj do listy
                             audio_chunk = AudioSegment.from_file(generated_chunk_path, format=file_format)
                             trimmed_chunk = trim_silence(audio_chunk)
                             audio_clips.append(trimmed_chunk)
                         else:
-                            print(f"[{model_name}] WARNING: Chunk {i+1} failed to generate or path was not returned.")
+                            print(f"[{model_name}] WARNING: Chunk {i+1} failed.")
                     
                     if not audio_clips:
                         print(f"[{model_name}] ERROR: No audio chunks were generated.")
                         return jsonify({"error": "Failed to generate any audio chunks."}), 500
                     
-                    # Łączenie klipów
-                    print(f"[{model_name}] Merging {len(audio_clips)} chunks → {final_output_path}")
+                    print(f"[{model_name}] Merging {len(audio_clips)} chunks → {working_path}")
                     combined_audio = AudioSegment.empty()
                     for clip in audio_clips:
-                        combined_audio += clip # Pydub łączy segmenty operatorem +
+                        combined_audio += clip
                     
-                    # Eksport finalnego pliku
-                    combined_audio.export(final_output_path, format=file_format)
-                    generated_path = final_output_path
+                    combined_audio.export(working_path, format=file_format)
+                    generated_path = working_path
 
                 finally:
                     if temp_dir.exists():
@@ -245,31 +247,52 @@ def create_app(path_converter):
                             os.remove(f)
                         temp_dir.rmdir()
 
-            return_audio = request.args.get("return_audio", "false").lower() == "true"
-
-            if return_audio and generated_path and generated_path.exists():
-                return send_file(generated_path, as_attachment=True, download_name=generated_path.name)
+            # 3. Finalizacja - Przenoszenie jeśli użyto staging
+            final_file_ready = False
             
-            if not generated_path or not generated_path.exists():
-                print(f"BŁĄD: Plik audio końcowy nie został utworzony.")
+            if generated_path and generated_path.exists():
+                if staging_dir:
+                    print(f"📦 Moving from staging to final dest: {real_output_path}")
+                    # shutil.move obsługuje przenoszenie między systemami plików (copy+delete)
+                    shutil.move(str(generated_path), str(real_output_path))
+                    final_file_ready = True
+                else:
+                    final_file_ready = True
+            
+            if not final_file_ready:
+                print("ERROR: Final audio file was not created.")
                 return jsonify({"error": "Final audio file was not created."}), 500
+
+            # Obsługa return_audio (opcjonalne pobieranie)
+            return_audio = request.args.get("return_audio", "false").lower() == "true"
+            if return_audio:
+                return send_file(real_output_path, as_attachment=True, download_name=real_output_path.name)
+
             print(f"Audio gotowe: {time.time() - start_t:.2f}s")
-            return jsonify({"message": msg, "output_file": str(generated_path)}), 200
+            return jsonify({"message": msg, "output_file": str(real_output_path)}), 200
         
         except Exception as e:
-            # Zwróć szczegółowy błąd (pomocne przy debugowaniu Pydub/ffmpeg)
             import traceback
             print(traceback.format_exc())
             return jsonify({"error": f"Error during TTS generation: {e}", "trace": traceback.format_exc()}), 500
 
     return app
 
-def run_server(path_converter):
+def run_server(path_converter, staging_path: str | None = None):
     parser = argparse.ArgumentParser(description="Multi-Model TTS API Server")
     parser.add_argument("--host", default="127.0.0.1")
     parser.add_argument("--port", type=int, default=8001)
     args = parser.parse_args()
 
+    staging_dir_obj = Path(staging_path) if staging_path else None
+    
+    # Jeśli podano staging, upewnij się że istnieje
+    if staging_dir_obj:
+        staging_dir_obj.mkdir(parents=True, exist_ok=True)
+        print(f"✅ Staging enabled. Fast generation at: {staging_dir_obj}")
+    else:
+        print(f"ℹ️ Staging disabled. Direct write mode.")
+
     print(f"🚀 Starting Multi-Model TTS API on http://{args.host}:{args.port}")
-    app = create_app(path_converter)
+    app = create_app(path_converter, staging_dir=staging_dir_obj)
     app.run(host=args.host, port=args.port)
