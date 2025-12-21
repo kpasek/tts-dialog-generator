@@ -79,9 +79,8 @@ class XTTSPolishTTS:
         clean_text = text.replace("...", ".").replace("…", ".")
         if not clean_text.strip():
             return output_path
-        clean_text = re.sub(r"\.$", "", clean_text)
-        # Bezpośrednia inferencja w FP32 (bez autocast)
-        # To eliminuje narzut przełączania typów.
+        if not re.match(r".*[\.\!\?]$", clean_text):
+            clean_text += '.'
         try:
             out = self.model.inference(
                 text=clean_text,
