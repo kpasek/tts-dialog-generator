@@ -1,6 +1,7 @@
 import os
 import sys
 from pathlib import Path
+import time
 from flask import Flask, request, jsonify, send_file
 import argparse
 import re
@@ -180,6 +181,8 @@ def create_app(path_converter):
         try:
             MAX_CHARS = 200
             generated_path: Path | None = None
+            
+            start_t = time.time()
 
             if len(text) <= MAX_CHARS:
                 print(f"[{model_name}] Generating single TTS → {final_output_path}")
@@ -246,7 +249,7 @@ def create_app(path_converter):
             
             if not generated_path or not generated_path.exists():
                 return jsonify({"error": "Final audio file was not created."}), 500
-
+            print(f"Audio gotowe: {time.time() - start_t:.2f}s")
             return jsonify({"message": msg, "output_file": str(generated_path)}), 200
         
         except Exception as e:
