@@ -268,7 +268,7 @@ def create_app(path_converter, staging_dir: Path | None = None):
             if return_audio:
                 return send_file(real_output_path, as_attachment=True, download_name=real_output_path.name)
 
-            print(f"Audio gotowe: {time.time() - start_t:.2f}s")
+            print(f"{time.time() - start_t:.2f}: {text}")
             return jsonify({"message": msg, "output_file": str(real_output_path)}), 200
         
         except Exception as e:
