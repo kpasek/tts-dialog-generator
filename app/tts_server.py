@@ -176,7 +176,6 @@ def create_app(path_converter, staging_dir: Path | None = None):
         if staging_dir:
             staging_filename = f"{uuid.uuid4().hex[:8]}_{real_output_path.name}"
             working_path = staging_dir / staging_filename
-            print(f"🚀 [Staging Strategy] Generating locally to: {working_path}")
         else:
             working_path = real_output_path
 
