@@ -223,7 +223,7 @@ def create_app(path_converter, staging_dir: Path | None = None):
                         temp_file_path = temp_dir / temp_file_name
                         
                         chunk_path_str = tts_model.tts(chunk, str(temp_file_path))
-                        if not is_audio_looks_ok(text, str(chunk_path_str)):
+                        if not is_audio_looks_ok(chunk, str(chunk_path_str)):
                             print(f"[{model_name}] Generated audio length looks wrong. Regenerating...")
                             chunk_path_str = Path(tts_model.tts(chunk, str(temp_file_path)))
                         generated_chunk_path = Path(chunk_path_str)
