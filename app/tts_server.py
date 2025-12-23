@@ -311,9 +311,9 @@ def is_audio_looks_ok(text, audio_path):
     cps = len(text) / duration_sec
     
     if cps <= 6 or cps >= 18:
-        print(f"Audio za długie ({duration_sec}s) dla tekstu o długości {len(text)} znaków.")
+        print(f"Audio niepoprawne: {len(text)} char / {duration_sec}s = CPS {cps}.")
         return False
-    print(f"Audio długość OK: {duration_sec}s dla tekstu o długości {len(text)} znaków.")
+    print(f"Audio CPS ok: {cps}.")
     return True
 
     """
