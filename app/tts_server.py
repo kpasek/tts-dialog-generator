@@ -311,9 +311,8 @@ def is_audio_looks_ok(text, audio_path):
     cps = len(text) / duration_sec
     
     if cps <= 6 or cps >= 18:
-        print(f"Audio niepoprawne: {len(text)} char / {duration_sec}s = CPS {cps}.")
+        print(f"Audio niepoprawne: {len(text)} char / {duration_sec}s = CPS {cps:.2f}.")
         return False
-    print(f"Audio CPS ok: {cps}.")
     return True
 
     """
