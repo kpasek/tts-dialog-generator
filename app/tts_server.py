@@ -15,15 +15,13 @@ from pydub.silence import detect_nonsilent
 sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 
 # --- Import modeli TTS ---
-from generators.stylish import StylishTTS
 from generators.tts_base import TTSBase
 from generators.xtts import XTTSPolishTTS
-
+from app.audio_verify import check_audio_quality
 
 # --- Rejestr modeli ---
 MODEL_REGISTRY = {
     "xtts": lambda voice: XTTSPolishTTS(voice_path=voice),
-    "stylish": lambda voice: StylishTTS(),
 }
 
 # --- Globals ---
@@ -198,7 +196,7 @@ def create_app(path_converter, staging_dir: Path | None = None):
                 print(f"[{model_name}] Generating single TTS → {working_path}")
                 # Model zapisuje do working_path
                 generated_path = Path(tts_model.tts(text, str(working_path)))
-                if not is_audio_looks_ok(text, str(generated_path)):
+                if not check_audio_quality(str(generated_path), text):
                     print(f"[{model_name}] Generated audio length looks wrong. Regenerating...")
                     generated_path = Path(tts_model.tts(text, str(working_path)))
             else:
@@ -223,7 +221,7 @@ def create_app(path_converter, staging_dir: Path | None = None):
                         temp_file_path = temp_dir / temp_file_name
                         
                         chunk_path_str = tts_model.tts(chunk, str(temp_file_path))
-                        if not is_audio_looks_ok(chunk, str(chunk_path_str)):
+                        if not check_audio_quality(str(chunk_path_str), chunk):
                             print(f"[{model_name}] Generated audio length looks wrong. Regenerating...")
                             chunk_path_str = Path(tts_model.tts(chunk, str(temp_file_path)))
                         generated_chunk_path = Path(chunk_path_str)
@@ -303,39 +301,3 @@ def run_server(path_converter, staging_path: str | None = None):
     app = create_app(path_converter, staging_dir=staging_dir_obj)
     app.run(host=args.host, port=args.port)
     
-    
-def is_audio_looks_ok(text, audio_path):
-    audio = AudioSegment.from_file(audio_path)
-    duration_sec = len(audio) / 1000.0
-    
-    cps = len(text) / duration_sec
-    
-    if cps <= 6 or cps >= 18:
-        print(f"Audio niepoprawne: {len(text)} char / {duration_sec}s = CPS {cps:.2f}.")
-        return False
-    return True
-
-    """
-    Sprawdza, czy wygenerowane audio pasuje do tekstu.
-    Zwraca True, jeśli jest OK, False, jeśli wykryto bełkot.
-    """
-    try:
-        result = validator_model.transcribe(audio_path)
-        transcribed_text = result["text"].strip() # type: ignore
-        
-        # 1. Sprawdzenie długości tekstu (bełkot często generuje dużo nadmiarowego tekstu)
-        if len(transcribed_text) > (len(original_text) * 1.2):
-            print(f"Błąd: Wygenerowany tekst jest za długi: {transcribed_text}")
-            return False
-
-        # 2. Sprawdzenie podobieństwa (opcjonalne, dla precyzji)
-        similarity = SequenceMatcher(None, original_text.lower(), transcribed_text.lower()).ratio()
-        
-        # Jeśli podobieństwo jest poniżej np. 70%, uznajemy to za błąd
-        # (Wartość 0.7 trzeba dobrać eksperymentalnie)
-        if similarity < 0.7:
-            print(f"Błąd: Tekst mało podobny. Oczekiwano: '{original_text}', Otrzymano: '{transcribed_text}'")
-            return False
-    except Exception as e:
-        print(f"Błąd walidacji: {e}")
-        return True
