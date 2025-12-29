@@ -90,7 +90,7 @@ class XTTSPolishTTS:
                 language="pl", # type: ignore
                 gpt_cond_latent=self.gpt_cond_latent, # type: ignore
                 speaker_embedding=self.speaker_embedding, # type: ignore
-                temperature=0.5, # type: ignore
+                temperature=0.05, # type: ignore
                 repetition_penalty=5.0, # type: ignore
                 top_p=0.8, # type: ignore
                 top_k=50, # type: ignore
