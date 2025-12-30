@@ -21,3 +21,4 @@ nnAudio
 munch
 coqui-tts
 coqpit-config
+whisper
