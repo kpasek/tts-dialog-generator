@@ -21,5 +21,5 @@ nnAudio
 munch
 coqui-tts
 coqpit-config
-whisper
+openai-whisper
 rapidfuzz
