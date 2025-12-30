@@ -22,3 +22,4 @@ munch
 coqui-tts
 coqpit-config
 whisper
+rapidfuzz
