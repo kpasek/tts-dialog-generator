@@ -20,3 +20,5 @@ coqui-tts
 coqpit-config
 openai-whisper
 rapidfuzz
+piper-tts
+onnxruntime-gpu

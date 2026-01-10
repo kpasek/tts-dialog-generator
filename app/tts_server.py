@@ -17,11 +17,12 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 # --- Import modeli TTS ---
 from generators.tts_base import TTSBase
 from generators.xtts import XTTSPolishTTS
+from generators.piper_tts import PiperTTS
 from app.audio_verify import check_audio_quality
-
 # --- Rejestr modeli ---
 MODEL_REGISTRY = {
     "xtts": lambda voice: XTTSPolishTTS(voice_path=voice),
+    "piper": lambda  model: PiperTTS(model_path=model)
 }
 
 # --- Globals ---
@@ -219,6 +220,8 @@ def create_app(path_converter, staging_dir: Path | None = None):
                     for i, chunk in enumerate(text_chunks):
                         temp_file_name = f"part_{i:03d}_{uuid.uuid4().hex[:6]}.{file_format}"
                         temp_file_path = temp_dir / temp_file_name
+
+                        print(f"Chunk: {chunk}")
                         
                         chunk_path_str = tts_model.tts(chunk, str(temp_file_path))
                         if not check_audio_quality(str(chunk_path_str), chunk):
