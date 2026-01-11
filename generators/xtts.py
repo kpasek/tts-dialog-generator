@@ -38,7 +38,7 @@ class XTTSPolishTTS:
 
         # 2. Ładujemy ścieżkę głosu
         if voice_path is None:
-            voice_name = "piotr.wav"
+            voice_name = "narrator.wav"
             self.voice_path_obj = GENERATOR_DIR / "voices" / voice_name
         else:
             self.voice_path_obj = Path(voice_path)
@@ -90,9 +90,9 @@ class XTTSPolishTTS:
                 language="pl", # type: ignore
                 gpt_cond_latent=self.gpt_cond_latent, # type: ignore
                 speaker_embedding=self.speaker_embedding, # type: ignore
-                temperature=0.15, # type: ignore
-                repetition_penalty=6.0, # type: ignore
-                top_p=0.8, # type: ignore
+                temperature=0.1, # type: ignore
+                repetition_penalty=5.0, # type: ignore
+                top_p=0.5, # type: ignore
                 top_k=50, # type: ignore
                 length_penalty=1.0, # type: ignore
                 speed=1.0, # type: ignore
@@ -101,7 +101,7 @@ class XTTSPolishTTS:
 
             # Zapis wyniku
             wav_tensor = torch.tensor(out["wav"]).unsqueeze(0)
-            torchaudio.save(output_path, wav_tensor.cpu(), 24000)
+            torchaudio.save(output_path, wav_tensor.cpu(), 22050)
 
             return output_path
 

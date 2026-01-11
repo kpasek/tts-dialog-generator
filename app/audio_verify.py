@@ -74,13 +74,14 @@ def check_audio_quality(audio_path, original_text) -> bool:
         org_text_to_test = re.sub(test_pattern, '', original_text.lower()) 
         trans_text_to_test = re.sub(test_pattern, '', transcribed_text.lower())
         # 2. Porównanie tekstów (Fuzzy matching)
-        similarity = fuzz.ratio(org_text_to_test[-10:], trans_text_to_test[-10:])
+        similarity = fuzz.ratio(org_text_to_test, trans_text_to_test)
         
         # 3. Logika wykrywania halucynacji
         # Jeśli transkrypcja jest dużo dłuższa od oryginału -> Halucynacja
         len_ratio = len(transcribed_text) / len(original_text) if len(original_text) > 0 else 0
-        
-        if similarity < MIN_SIMILARITY:
+
+        min_similarity = 95 if len(original_text) < 30 else 85
+        if similarity < min_similarity:
             print(f"   [!] Niska zgodność: {similarity}% (Oczekiwano: '{original_text}' -> Usłyszano: '{transcribed_text}')")
             return False
         
