@@ -150,6 +150,7 @@ def create_app(path_converter, staging_dir: Path | None = None):
     @app.route("/<model_name>/tts", methods=["POST"])
     def tts_endpoint(model_name: str):
         if not request.is_json:
+            print("Received non-JSON request.")
             return jsonify({"error": "Request must be JSON"}), 400
 
         data = request.get_json()
@@ -163,6 +164,7 @@ def create_app(path_converter, staging_dir: Path | None = None):
         voice_file = path_converter(voice_file_raw) if voice_file_raw else None
 
         if not text or not real_output_file:
+            print("Missing 'text' or 'output_file'")
             return jsonify({"error": "Missing 'text' or 'output_file'"}), 400
 
         real_output_path = Path(real_output_file)

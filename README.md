@@ -31,8 +31,8 @@ W przypadku posiadania karty NVIDIA i chęci generowania na GPU W pierwszej kole
 
 ```bash
 pip uninstall torch torchvision torchaudio torchcodec
-pip install torch==2.9 torchaudio==2.9 --index-url=https://download.pytorch.org/whl/cu129
-pip install torchcodec==0.9
+pip install torch torchaudio --index-url=https://download.pytorch.org/whl/cu129
+pip install torchcodec
 ```
 
 ### Tylko STylish
