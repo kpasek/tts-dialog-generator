@@ -19,22 +19,33 @@ class XTTSPolishTTS:
     TTS implementation using XTTS v2.
     Configuration: FP32 (Native) + Cached Latents + No Compilation overhead.
     """
+    
+    _shared_wrapper = None
+    _shared_model = None
+    _latents_cache = {}
 
     def __init__(self, voice_path: str | Path | None = None):
         torch.serialization.add_safe_globals([
             XttsConfig, XttsArgs, XttsAudioConfig, BaseDatasetConfig
         ])
 
-        print("Inicjalizacja XTTS v2 (Tryb Czysta Wydajność)...")
+        # 1. Ładujemy model klasycznie (FP32) - TYLKO RAZ
+        if XTTSPolishTTS._shared_wrapper is None:
+            print("Inicjalizacja XTTS v2 (Tryb Czysta Wydajność) - Ładowanie modelu...")
+            # To jest najstabilniejsza i na Twoim sprzęcie najszybsza opcja.
+            self.wrapper = TTS("tts_models/multilingual/multi-dataset/xtts_v2")
+            self.model = self.wrapper.synthesizer.tts_model # type: ignore
 
-        # 1. Ładujemy model klasycznie (FP32)
-        # To jest najstabilniejsza i na Twoim sprzęcie najszybsza opcja.
-        self.wrapper = TTS("tts_models/multilingual/multi-dataset/xtts_v2")
-        self.model = self.wrapper.synthesizer.tts_model # type: ignore
-
-        device = "cuda" if torch.cuda.is_available() else "cpu"
-        print(f"Urządzenie: {device}")
-        self.wrapper.to(device)  # Domyślnie float32
+            device = "cuda" if torch.cuda.is_available() else "cpu"
+            print(f"Urządzenie: {device}")
+            self.wrapper.to(device)  # Domyślnie float32
+            
+            XTTSPolishTTS._shared_wrapper = self.wrapper
+            XTTSPolishTTS._shared_model = self.model
+        else:
+            print("XTTS v2: Używam załadowanego modelu z cache.")
+            self.wrapper = XTTSPolishTTS._shared_wrapper
+            self.model = XTTSPolishTTS._shared_model # type: ignore
 
         # 2. Ładujemy ścieżkę głosu
         if voice_path is None:
@@ -50,18 +61,28 @@ class XTTSPolishTTS:
         print(f"Używam pliku głosu: {self.voice}")
 
         # 3. OPTYMALIZACJA: Cache Latentów
-        # To jedyny element, który zostawiamy. Oszczędza ok. 0.5 - 1.0s na każdym pliku
-        # poprzez uniknięcie ponownego czytania i analizowania pliku WAV.
-        print("Obliczanie parametrów głosu (latents)...")
-        try:
-            start_t = time.time()
-            self.gpt_cond_latent, self.speaker_embedding = self.model.get_conditioning_latents( # type: ignore
-                audio_path=[self.voice]
-            )
-            print(f"Latenty gotowe w {time.time() - start_t:.2f}s")
-        except Exception as e:
-            print(f"BŁĄD KRYTYCZNY: {e}")
-            raise e
+        # Sprawdzamy, czy mamy już policzone parametry dla tego pliku
+        voice_key = str(self.voice_path_obj.resolve())
+        
+        if voice_key in XTTSPolishTTS._latents_cache:
+            print(f"XTTS v2: Używam zagregowanych parametrów głosu z cache dla: {self.voice_path_obj.name}")
+            self.gpt_cond_latent, self.speaker_embedding = XTTSPolishTTS._latents_cache[voice_key]
+        else:
+            # To jedyny element, który zostawiamy. Oszczędza ok. 0.5 - 1.0s na każdym pliku
+            # poprzez uniknięcie ponownego czytania i analizowania pliku WAV.
+            print(f"Obliczanie parametrów głosu (latents) dla {self.voice_path_obj.name}...")
+            try:
+                start_t = time.time()
+                self.gpt_cond_latent, self.speaker_embedding = self.model.get_conditioning_latents( # type: ignore
+                    audio_path=[self.voice]
+                )
+                
+                # Zapisujemy do cache
+                XTTSPolishTTS._latents_cache[voice_key] = (self.gpt_cond_latent, self.speaker_embedding)
+                print(f"Latenty gotowe w {time.time() - start_t:.2f}s i zapisane w cache.")
+            except Exception as e:
+                print(f"BŁĄD KRYTYCZNY: {e}")
+                raise e
 
 
     @property
