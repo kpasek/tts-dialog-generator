@@ -189,15 +189,18 @@ def create_app(path_converter, staging_dir: Path | None = None):
             print("Critical Error: tts_model is None after initialization.")
             return jsonify({"error": "TTS model is not initialized."}), 500
         
+
+        import gc
         try:
             MAX_CHARS = 200
             generated_path: Path | None = None
-            
             start_t = time.time()
+            audio_clips = None
+            combined_audio = None
+            temp_dir = None
 
             if len(text) <= MAX_CHARS:
                 print(f"[{model_name}] Generating single TTS → {working_path}")
-                # Model zapisuje do working_path
                 generated_path = Path(tts_model.tts(text, str(working_path)))
                 if not check_audio_quality(str(generated_path), text):
                     print(f"[{model_name}] Generated audio length looks wrong. Regenerating...")
@@ -206,84 +209,80 @@ def create_app(path_converter, staging_dir: Path | None = None):
                 print(f"[{model_name}] Text > {MAX_CHARS} chars. Splitting...")
                 text_chunks = split_text(text, MAX_CHARS)
                 print(f"[{model_name}] Split into {len(text_chunks)} chunks.")
-                
                 audio_clips = []
-                
-                # Temp dir tworzymy względem working_path. 
-                # Jeśli working_path jest na Linuxie (staging), temp też tam będzie (SZYBKO!)
                 temp_dir = working_path.parent / f"temp_{uuid.uuid4().hex[:8]}"
                 temp_dir.mkdir(exist_ok=True)
-
                 file_format = working_path.suffix.lstrip('.')
                 if not file_format:
-                    file_format = "wav" 
-
+                    file_format = "wav"
                 try:
                     for i, chunk in enumerate(text_chunks):
                         temp_file_name = f"part_{i:03d}_{uuid.uuid4().hex[:6]}.{file_format}"
                         temp_file_path = temp_dir / temp_file_name
-
                         print(f"Chunk: {chunk}")
-                        
                         chunk_path_str = tts_model.tts(chunk, str(temp_file_path))
                         if not check_audio_quality(str(chunk_path_str), chunk):
                             print(f"[{model_name}] Generated audio length looks wrong. Regenerating...")
                             chunk_path_str = Path(tts_model.tts(chunk, str(temp_file_path)))
                         generated_chunk_path = Path(chunk_path_str)
-                        
                         if generated_chunk_path.exists():
                             audio_chunk = AudioSegment.from_file(generated_chunk_path, format=file_format)
                             trimmed_chunk = trim_silence(audio_chunk)
                             audio_clips.append(trimmed_chunk)
+                            del audio_chunk
+                            del trimmed_chunk
                         else:
                             print(f"[{model_name}] WARNING: Chunk {i+1} failed.")
-                    
                     if not audio_clips:
                         print(f"[{model_name}] ERROR: No audio chunks were generated.")
                         return jsonify({"error": "Failed to generate any audio chunks."}), 500
-                    
                     print(f"[{model_name}] Merging {len(audio_clips)} chunks → {working_path}")
                     combined_audio = AudioSegment.empty()
                     for clip in audio_clips:
                         combined_audio += clip
-                    
+                        del clip
                     combined_audio.export(working_path, format=file_format)
                     generated_path = working_path
-
                 finally:
-                    if temp_dir.exists():
+                    if temp_dir and temp_dir.exists():
                         for f in temp_dir.glob('*'):
                             os.remove(f)
                         temp_dir.rmdir()
-
-            # 3. Finalizacja - Przenoszenie jeśli użyto staging
             final_file_ready = False
-            
             if generated_path and generated_path.exists():
                 if staging_dir:
                     print(f"📦 Moving from staging to final dest: {real_output_path}")
-                    # shutil.move obsługuje przenoszenie między systemami plików (copy+delete)
                     shutil.move(str(generated_path), str(real_output_path))
                     final_file_ready = True
                 else:
                     final_file_ready = True
-            
             if not final_file_ready:
                 print("ERROR: Final audio file was not created.")
                 return jsonify({"error": "Final audio file was not created."}), 500
-
-            # Obsługa return_audio (opcjonalne pobieranie)
             return_audio = request.args.get("return_audio", "false").lower() == "true"
             if return_audio:
                 return send_file(real_output_path, as_attachment=True, download_name=real_output_path.name)
-
             print(f"{time.time() - start_t:.2f}: {text}")
             return jsonify({"message": msg, "output_file": str(real_output_path)}), 200
-        
         except Exception as e:
             import traceback
             print(traceback.format_exc())
             return jsonify({"error": f"Error during TTS generation: {e}", "trace": traceback.format_exc()}), 500
+        finally:
+            # Jawne czyszczenie dużych obiektów i pamięci
+            if audio_clips is not None:
+                del audio_clips
+            if combined_audio is not None:
+                del combined_audio
+            if temp_dir is not None:
+                del temp_dir
+            gc.collect()
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except ImportError:
+                pass
 
     return app
 
