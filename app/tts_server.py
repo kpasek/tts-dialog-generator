@@ -18,7 +18,7 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from generators.tts_base import TTSBase
 from generators.xtts import XTTSPolishTTS
 from generators.piper_tts import PiperTTS
-from app.audio_verify import check_audio_quality
+from app.audio_verify import check_audio_quality, analyze_audio
 # --- Rejestr modeli ---
 MODEL_REGISTRY = {
     "xtts": lambda voice: XTTSPolishTTS(voice_path=voice),
@@ -146,6 +146,51 @@ def create_app(path_converter, staging_dir: Path | None = None):
                  Jeśli None, zapisuje bezpośrednio do celu.
     """
     app = Flask(__name__)
+
+    @app.route("/audio/verify", methods=["POST"])
+    def verify_audio():
+        import traceback
+        try:
+            if not request.is_json:
+                 print("Error: Request must be JSON")
+                 return jsonify({"error": "Request must be JSON"}), 400
+            
+            data = request.get_json()
+            audio_path_raw = data.get("audio_path")
+            text = data.get("text")
+            
+            if not audio_path_raw or not text:
+                 print(f"Error: Missing parameters. audio_path='{audio_path_raw}', text='{text}'") 
+                 return jsonify({"error": "Missing 'audio_path' or 'text'"}), 400
+                 
+            # Convert path using the provided converter (if any)
+            try:
+                real_audio_path = path_converter(audio_path_raw) if audio_path_raw else None
+            except Exception as e:
+                print(f"Error converting path '{audio_path_raw}': {e}")
+                print(traceback.format_exc())
+                return jsonify({"error": f"Path conversion error: {e}"}), 500
+            
+            # Verify file exists
+            if not real_audio_path or not Path(real_audio_path).exists():
+                 print(f"Error: Audio file not found at: {real_audio_path}")
+                 return jsonify({"error": f"Audio file not found: {real_audio_path}"}), 404
+            
+            print(f"Verifying audio: {real_audio_path} against text: '{text[:50]}...'")
+            result = analyze_audio(str(real_audio_path), text)
+            
+            if not result.get("success", False):
+                print(f"Verification failed: {result.get('error')}")
+            else:
+                print(f"Verification success. Score: {result.get('score')}")
+
+            status_code = 200 if result.get("success", False) else 500
+            return jsonify(result), status_code
+            
+        except Exception as e:
+            print(f"Unexpected error in /audio/verify: {e}")
+            print(traceback.format_exc())
+            return jsonify({"error": f"Internal server error: {e}"}), 500
 
     @app.route("/<model_name>/tts", methods=["POST"])
     def tts_endpoint(model_name: str):
