@@ -94,14 +94,16 @@ class XTTSPolishTTS:
         return False
 
     def tts(self, text, output_path="output_polish.wav"):
+        import gc
         clean_text = text.replace("...", ".").replace("…", ".")
         clean_text = clean_text.strip('.')
         if not clean_text.strip():
             return output_path
         if not re.match(r".*[\.\!\?]$", clean_text):
-            clean_text += ','
-            
-        clean_text += ' ' 
+            clean_text += '.'
+        clean_text += ' '
+        wav_tensor = None
+        out = None
         try:
             out = self.model.inference( # type: ignore
                 text=clean_text, # type: ignore
@@ -116,13 +118,21 @@ class XTTSPolishTTS:
                 speed=1.0, # type: ignore
                 enable_text_splitting=False # type: ignore
             )
-
-            # Zapis wyniku
             wav_tensor = torch.tensor(out["wav"]).unsqueeze(0)
             torchaudio.save(output_path, wav_tensor.cpu(), 22050)
-
             return output_path
-
         except Exception as e:
             print(f"Błąd TTS: {e}")
             return output_path
+        finally:
+            # Jawne czyszczenie pamięci po generacji
+            if wav_tensor is not None:
+                del wav_tensor
+            if out is not None:
+                del out
+            gc.collect()
+            try:
+                if torch.cuda.is_available():
+                    torch.cuda.empty_cache()
+            except Exception:
+                pass

@@ -31,6 +31,26 @@ current_model_name: str | None = None
 current_voice_path: Path | None = None
 
 
+def _get_rss_mb() -> float | None:
+    try:
+        with open('/proc/self/status', 'r') as f:
+            for line in f:
+                if line.startswith('VmRSS:'):
+                    parts = line.split()
+                    kb = int(parts[1])
+                    return kb / 1024.0
+    except Exception:
+        return None
+
+
+def _log_mem(stage: str) -> None:
+    mb = _get_rss_mb()
+    if mb is None:
+        print(f"[MEM] {stage}: unavailable")
+    else:
+        print(f"[MEM] {stage}: {mb:.1f} MB")
+
+
 def split_text(text: str, max_len: int = 200) -> list[str]:
     """
     Dzieli tekst na fragmenty <= max_len.
@@ -192,6 +212,33 @@ def create_app(path_converter, staging_dir: Path | None = None):
             print(traceback.format_exc())
             return jsonify({"error": f"Internal server error: {e}"}), 500
 
+    @app.route('/admin/mem', methods=['GET'])
+    def admin_mem():
+        try:
+            rss = _get_rss_mb()
+            latents = None
+            try:
+                from generators.xtts import XTTSPolishTTS
+                latents = len(XTTSPolishTTS._latents_cache)
+            except Exception:
+                latents = None
+            info = {
+                'rss_mb': rss,
+                'latents_cache_size': latents,
+                'tts_model_loaded': current_model_name is not None,
+                'current_model_name': current_model_name,
+            }
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    info['cuda_reserved_mb'] = torch.cuda.memory_reserved() / 1024.0 / 1024.0
+                    info['cuda_allocated_mb'] = torch.cuda.memory_allocated() / 1024.0 / 1024.0
+            except Exception:
+                pass
+            return jsonify(info), 200
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
+
     @app.route("/<model_name>/tts", methods=["POST"])
     def tts_endpoint(model_name: str):
         if not request.is_json:
@@ -226,6 +273,7 @@ def create_app(path_converter, staging_dir: Path | None = None):
         else:
             working_path = real_output_path
 
+        _log_mem("before_model_init")
         success, msg = initialize_model(model_name.lower(), voice_file)
         if not success:
             print(f"Model initialization error: {msg}")
@@ -233,6 +281,7 @@ def create_app(path_converter, staging_dir: Path | None = None):
         if tts_model is None:
             print("Critical Error: tts_model is None after initialization.")
             return jsonify({"error": "TTS model is not initialized."}), 500
+        _log_mem("after_model_init")
         
 
         import gc
@@ -250,6 +299,7 @@ def create_app(path_converter, staging_dir: Path | None = None):
                 if not check_audio_quality(str(generated_path), text):
                     print(f"[{model_name}] Generated audio length looks wrong. Regenerating...")
                     generated_path = Path(tts_model.tts(text, str(working_path)))
+                _log_mem("after_generation")
             else:
                 print(f"[{model_name}] Text > {MAX_CHARS} chars. Splitting...")
                 text_chunks = split_text(text, MAX_CHARS)
@@ -274,6 +324,7 @@ def create_app(path_converter, staging_dir: Path | None = None):
                             audio_chunk = AudioSegment.from_file(generated_chunk_path, format=file_format)
                             trimmed_chunk = trim_silence(audio_chunk)
                             audio_clips.append(trimmed_chunk)
+                            _log_mem(f"after_chunk_{i}")
                             del audio_chunk
                             del trimmed_chunk
                         else:
@@ -288,6 +339,7 @@ def create_app(path_converter, staging_dir: Path | None = None):
                         del clip
                     combined_audio.export(working_path, format=file_format)
                     generated_path = working_path
+                    _log_mem("after_generation")
                 finally:
                     if temp_dir and temp_dir.exists():
                         for f in temp_dir.glob('*'):
@@ -328,6 +380,7 @@ def create_app(path_converter, staging_dir: Path | None = None):
                     torch.cuda.empty_cache()
             except ImportError:
                 pass
+            _log_mem("after_cleanup")
 
     return app
 

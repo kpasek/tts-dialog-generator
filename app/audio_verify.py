@@ -72,7 +72,14 @@ def analyze_audio(audio_path: str, original_text: str) -> dict:
         import torch
         try:
             # Wymuś transkrypcję na CPU (nie przełączaj modelu, tylko wymuś device w transcribe)
+            try:
+                with open('/proc/self/status', 'r') as _f:
+                    pass
+            except Exception:
+                pass
+            print(f"[WHISPER] Starting transcribe for {audio_path}")
             result = asr_model.transcribe(audio_path, language='pl', fp16=False, device='cpu')
+            print(f"[WHISPER] Finished transcribe for {audio_path}")
         except Exception as cpu_error:
             print(f"[WHISPER ERROR] Transkrypcja na CPU nie powiodła się: {cpu_error}")
             return {"success": False, "error": f"Błąd transkrypcji audio: {cpu_error}"}
