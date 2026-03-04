@@ -5,9 +5,12 @@ import shutil
 from pathlib import Path
 import time
 from flask import Flask, request, jsonify, send_file
+from flask_cors import CORS
 import argparse
 import re
 import uuid
+import io
+import tempfile
 from pydub import AudioSegment
 from pydub.silence import detect_nonsilent
 
@@ -166,6 +169,11 @@ def create_app(path_converter, staging_dir: Path | None = None):
                  Jeśli None, zapisuje bezpośrednio do celu.
     """
     app = Flask(__name__)
+    CORS(app)
+
+    @app.route("/", methods=["GET", "OPTIONS"])
+    def index():
+        return jsonify({"status": "running", "message": "TTS API Server is up"}), 200
 
     @app.route("/audio/verify", methods=["POST"])
     def verify_audio():
@@ -381,6 +389,65 @@ def create_app(path_converter, staging_dir: Path | None = None):
             except ImportError:
                 pass
             _log_mem("after_cleanup")
+
+    @app.route("/<model_name>/stream", methods=["POST"])
+    def stream_endpoint(model_name: str):
+        if not request.is_json:
+            print("Received non-JSON request for stream.")
+            return jsonify({"error": "Request must be JSON"}), 400
+
+        data = request.get_json()
+        text = data.get("text")
+        
+        voice_file_raw = data.get("voice_file")
+        voice_file = path_converter(voice_file_raw) if voice_file_raw else None
+
+        if not text:
+            print("Missing 'text' for stream.")
+            return jsonify({"error": "Missing 'text'"}), 400
+
+        try:
+            _log_mem("before_model_init_stream")
+            success, msg = initialize_model(model_name.lower(), voice_file)
+            if not success:
+                print(f"Model initialization error: {msg}")
+                return jsonify({"error": msg}), 500
+            
+            if tts_model is None:
+                print("Critical Error: tts_model is None after initialization.")
+                return jsonify({"error": "TTS model is not initialized."}), 500
+            
+            _log_mem("after_model_init_stream")
+
+            # Użycie /dev/shm (RAM dysk w Linux) do uniknięcia fizycznych operacji I/O
+            temp_file_name = f"stream_{uuid.uuid4().hex[:8]}.wav"
+            ram_disk = Path("/dev/shm")
+            base_dir = ram_disk if ram_disk.exists() and ram_disk.is_dir() else Path(tempfile.gettempdir())
+            temp_file_path = base_dir / temp_file_name
+
+            print(f"[{model_name}] Generowanie strumieniowe (RAM) -> {temp_file_path}")
+            
+            # Generowanie audio używając metody modelu TTS do pliku w RAM
+            tts_model.tts(text, str(temp_file_path))
+
+            if not temp_file_path.exists():
+                return jsonify({"error": "Model failed to generate audio file."}), 500
+
+            # Zapakowanie do io.BytesIO
+            with open(temp_file_path, "rb") as f:
+                audio_data = io.BytesIO(f.read())
+            
+            # Usunięcie pliku z RAM dysku
+            os.remove(temp_file_path)
+
+            audio_data.seek(0)
+            print(f"[{model_name}] Strumieniowanie wygenerowanego pliku do klienta.")
+            return send_file(audio_data, mimetype="audio/wav", as_attachment=False, download_name="stream.wav")
+
+        except Exception as e:
+            import traceback
+            print(traceback.format_exc())
+            return jsonify({"error": f"Error during TTS generation: {e}"}), 500
 
     return app
 
