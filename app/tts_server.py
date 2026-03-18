@@ -5,9 +5,12 @@ import shutil
 from pathlib import Path
 import time
 from flask import Flask, request, jsonify, send_file
+from flask_cors import CORS
 import argparse
 import re
 import uuid
+import io
+import tempfile
 from pydub import AudioSegment
 from pydub.silence import detect_nonsilent
 
@@ -18,17 +21,39 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from generators.tts_base import TTSBase
 from generators.xtts import XTTSPolishTTS
 from generators.piper_tts import PiperTTS
-from app.audio_verify import check_audio_quality
+from generators.teamsp_tts import TeamSPTTS
+from app.audio_verify import check_audio_quality, analyze_audio
 # --- Rejestr modeli ---
 MODEL_REGISTRY = {
     "xtts": lambda voice: XTTSPolishTTS(voice_path=voice),
-    "piper": lambda  model: PiperTTS(model_path=model)
+    "piper": lambda  model: PiperTTS(model_path=model),
+    "teamsp": lambda voice: TeamSPTTS(voice=str(voice)) if voice else TeamSPTTS()
 }
 
 # --- Globals ---
 tts_model: TTSBase | None = None
 current_model_name: str | None = None
 current_voice_path: Path | None = None
+
+
+def _get_rss_mb() -> float | None:
+    try:
+        with open('/proc/self/status', 'r') as f:
+            for line in f:
+                if line.startswith('VmRSS:'):
+                    parts = line.split()
+                    kb = int(parts[1])
+                    return kb / 1024.0
+    except Exception:
+        return None
+
+
+def _log_mem(stage: str) -> None:
+    mb = _get_rss_mb()
+    if mb is None:
+        print(f"[MEM] {stage}: unavailable")
+    else:
+        print(f"[MEM] {stage}: {mb:.1f} MB")
 
 
 def split_text(text: str, max_len: int = 200) -> list[str]:
@@ -146,6 +171,83 @@ def create_app(path_converter, staging_dir: Path | None = None):
                  Jeśli None, zapisuje bezpośrednio do celu.
     """
     app = Flask(__name__)
+    CORS(app)
+
+    @app.route("/", methods=["GET", "OPTIONS"])
+    def index():
+        return jsonify({"status": "running", "message": "TTS API Server is up"}), 200
+
+    @app.route("/audio/verify", methods=["POST"])
+    def verify_audio():
+        import traceback
+        try:
+            if not request.is_json:
+                 print("Error: Request must be JSON")
+                 return jsonify({"error": "Request must be JSON"}), 400
+            
+            data = request.get_json()
+            audio_path_raw = data.get("audio_path")
+            text = data.get("text")
+            
+            if not audio_path_raw or not text:
+                 print(f"Error: Missing parameters. audio_path='{audio_path_raw}', text='{text}'") 
+                 return jsonify({"error": "Missing 'audio_path' or 'text'"}), 400
+                 
+            # Convert path using the provided converter (if any)
+            try:
+                real_audio_path = path_converter(audio_path_raw) if audio_path_raw else None
+            except Exception as e:
+                print(f"Error converting path '{audio_path_raw}': {e}")
+                print(traceback.format_exc())
+                return jsonify({"error": f"Path conversion error: {e}"}), 500
+            
+            # Verify file exists
+            if not real_audio_path or not Path(real_audio_path).exists():
+                 print(f"Error: Audio file not found at: {real_audio_path}")
+                 return jsonify({"error": f"Audio file not found: {real_audio_path}"}), 404
+            
+            print(f"Verifying audio: {real_audio_path} against text: '{text[:50]}...'")
+            result = analyze_audio(str(real_audio_path), text)
+            
+            if not result.get("success", False):
+                print(f"Verification failed: {result.get('error')}")
+            else:
+                print(f"Verification success. Score: {result.get('score')}")
+
+            status_code = 200 if result.get("success", False) else 500
+            return jsonify(result), status_code
+            
+        except Exception as e:
+            print(f"Unexpected error in /audio/verify: {e}")
+            print(traceback.format_exc())
+            return jsonify({"error": f"Internal server error: {e}"}), 500
+
+    @app.route('/admin/mem', methods=['GET'])
+    def admin_mem():
+        try:
+            rss = _get_rss_mb()
+            latents = None
+            try:
+                from generators.xtts import XTTSPolishTTS
+                latents = len(XTTSPolishTTS._latents_cache)
+            except Exception:
+                latents = None
+            info = {
+                'rss_mb': rss,
+                'latents_cache_size': latents,
+                'tts_model_loaded': current_model_name is not None,
+                'current_model_name': current_model_name,
+            }
+            try:
+                import torch
+                if torch.cuda.is_available():
+                    info['cuda_reserved_mb'] = torch.cuda.memory_reserved() / 1024.0 / 1024.0
+                    info['cuda_allocated_mb'] = torch.cuda.memory_allocated() / 1024.0 / 1024.0
+            except Exception:
+                pass
+            return jsonify(info), 200
+        except Exception as e:
+            return jsonify({'error': str(e)}), 500
 
     @app.route("/<model_name>/tts", methods=["POST"])
     def tts_endpoint(model_name: str):
@@ -181,6 +283,7 @@ def create_app(path_converter, staging_dir: Path | None = None):
         else:
             working_path = real_output_path
 
+        _log_mem("before_model_init")
         success, msg = initialize_model(model_name.lower(), voice_file)
         if not success:
             print(f"Model initialization error: {msg}")
@@ -188,6 +291,7 @@ def create_app(path_converter, staging_dir: Path | None = None):
         if tts_model is None:
             print("Critical Error: tts_model is None after initialization.")
             return jsonify({"error": "TTS model is not initialized."}), 500
+        _log_mem("after_model_init")
         
 
         import gc
@@ -205,6 +309,7 @@ def create_app(path_converter, staging_dir: Path | None = None):
                 if not check_audio_quality(str(generated_path), text):
                     print(f"[{model_name}] Generated audio length looks wrong. Regenerating...")
                     generated_path = Path(tts_model.tts(text, str(working_path)))
+                _log_mem("after_generation")
             else:
                 print(f"[{model_name}] Text > {MAX_CHARS} chars. Splitting...")
                 text_chunks = split_text(text, MAX_CHARS)
@@ -229,6 +334,7 @@ def create_app(path_converter, staging_dir: Path | None = None):
                             audio_chunk = AudioSegment.from_file(generated_chunk_path, format=file_format)
                             trimmed_chunk = trim_silence(audio_chunk)
                             audio_clips.append(trimmed_chunk)
+                            _log_mem(f"after_chunk_{i}")
                             del audio_chunk
                             del trimmed_chunk
                         else:
@@ -243,6 +349,7 @@ def create_app(path_converter, staging_dir: Path | None = None):
                         del clip
                     combined_audio.export(working_path, format=file_format)
                     generated_path = working_path
+                    _log_mem("after_generation")
                 finally:
                     if temp_dir and temp_dir.exists():
                         for f in temp_dir.glob('*'):
@@ -283,6 +390,66 @@ def create_app(path_converter, staging_dir: Path | None = None):
                     torch.cuda.empty_cache()
             except ImportError:
                 pass
+            _log_mem("after_cleanup")
+
+    @app.route("/<model_name>/stream", methods=["POST"])
+    def stream_endpoint(model_name: str):
+        if not request.is_json:
+            print("Received non-JSON request for stream.")
+            return jsonify({"error": "Request must be JSON"}), 400
+
+        data = request.get_json()
+        text = data.get("text")
+        
+        voice_file_raw = data.get("voice_file")
+        voice_file = path_converter(voice_file_raw) if voice_file_raw else None
+
+        if not text:
+            print("Missing 'text' for stream.")
+            return jsonify({"error": "Missing 'text'"}), 400
+
+        try:
+            _log_mem("before_model_init_stream")
+            success, msg = initialize_model(model_name.lower(), voice_file)
+            if not success:
+                print(f"Model initialization error: {msg}")
+                return jsonify({"error": msg}), 500
+            
+            if tts_model is None:
+                print("Critical Error: tts_model is None after initialization.")
+                return jsonify({"error": "TTS model is not initialized."}), 500
+            
+            _log_mem("after_model_init_stream")
+
+            # Użycie /dev/shm (RAM dysk w Linux) do uniknięcia fizycznych operacji I/O
+            temp_file_name = f"stream_{uuid.uuid4().hex[:8]}.wav"
+            ram_disk = Path("/dev/shm")
+            base_dir = ram_disk if ram_disk.exists() and ram_disk.is_dir() else Path(tempfile.gettempdir())
+            temp_file_path = base_dir / temp_file_name
+
+            print(f"[{model_name}] Generowanie strumieniowe (RAM) -> {temp_file_path}")
+            
+            # Generowanie audio używając metody modelu TTS do pliku w RAM
+            tts_model.tts(text, str(temp_file_path))
+
+            if not temp_file_path.exists():
+                return jsonify({"error": "Model failed to generate audio file."}), 500
+
+            # Zapakowanie do io.BytesIO
+            with open(temp_file_path, "rb") as f:
+                audio_data = io.BytesIO(f.read())
+            
+            # Usunięcie pliku z RAM dysku
+            os.remove(temp_file_path)
+
+            audio_data.seek(0)
+            print(f"[{model_name}] Strumieniowanie wygenerowanego pliku do klienta.")
+            return send_file(audio_data, mimetype="audio/wav", as_attachment=False, download_name="stream.wav")
+
+        except Exception as e:
+            import traceback
+            print(traceback.format_exc())
+            return jsonify({"error": f"Error during TTS generation: {e}"}), 500
 
     return app
 

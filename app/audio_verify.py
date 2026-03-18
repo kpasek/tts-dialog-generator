@@ -34,31 +34,97 @@ def verify_cps(text, audio_path):
         return False
     return True
 
+
+def analyze_audio(audio_path: str, original_text: str) -> dict:
     """
-    Sprawdza, czy wygenerowane audio pasuje do tekstu.
-    Zwraca True, jeśli jest OK, False, jeśli wykryto bełkot.
+    Transkrybuje plik audio i porównuje z oryginałem.
+    Zwraca słownik ze szczegółami analizy:
+    - transcribed_text: tekst odczytany z audio
+    - score: wynik dopasowania (0-100)
+    - original_text: tekst wzorcowy
     """
     try:
-        result = validator_model.transcribe(audio_path)
-        transcribed_text = result["text"].strip() # type: ignore
-        
-        # 1. Sprawdzenie długości tekstu (bełkot często generuje dużo nadmiarowego tekstu)
-        if len(transcribed_text) > (len(original_text) * 1.2):
-            print(f"Błąd: Wygenerowany tekst jest za długi: {transcribed_text}")
-            return False
+        if not os.path.exists(audio_path):
+            return {
+                "error": f"File not found: {audio_path}",
+                "success": False
+            }
 
-        # 2. Sprawdzenie podobieństwa (opcjonalne, dla precyzji)
-        similarity = SequenceMatcher(None, original_text.lower(), transcribed_text.lower()).ratio()
+
+
+        # Logowanie parametrów pliku audio i walidacja
+        try:
+            from pydub.utils import mediainfo
+            info = mediainfo(audio_path)
+            print(f"[AUDIO INFO] {audio_path}: {info}")
+            # Sprawdź długość i rozmiar pliku
+            duration = float(info.get('duration', 0))
+            filesize = os.path.getsize(audio_path)
+            if duration < 0.5:
+                print(f"[AUDIO ERROR] Plik audio za krótki: {duration}s")
+                return {"success": False, "error": f"Plik audio za krótki: {duration}s"}
+            if filesize < 1024:
+                print(f"[AUDIO ERROR] Plik audio zbyt mały: {filesize} bajtów")
+                return {"success": False, "error": f"Plik audio zbyt mały: {filesize} bajtów"}
+        except Exception as e:
+            print(f"[AUDIO INFO] Błąd pobierania info: {e}")
+
+        import torch
+        try:
+            # Wymuś transkrypcję na CPU (nie przełączaj modelu, tylko wymuś device w transcribe)
+            try:
+                with open('/proc/self/status', 'r') as _f:
+                    pass
+            except Exception:
+                pass
+            print(f"[WHISPER] Starting transcribe for {audio_path}")
+            result = asr_model.transcribe(audio_path, language='pl', fp16=False, device='cpu')
+            print(f"[WHISPER] Finished transcribe for {audio_path}")
+        except Exception as cpu_error:
+            print(f"[WHISPER ERROR] Transkrypcja na CPU nie powiodła się: {cpu_error}")
+            return {"success": False, "error": f"Błąd transkrypcji audio: {cpu_error}"}
+
+        transcribed_text = result.get('text', '').strip() if result else ''
+        if not transcribed_text or 'nan' in transcribed_text.lower():
+            print(f"[WHISPER ERROR] Transkrypcja zwróciła pusty tekst lub NaN")
+            return {"success": False, "error": "Transkrypcja nie powiodła się (pusty tekst lub NaN). Plik audio może być uszkodzony lub nieczytelny."}
+
+        # Normalizacja tekstów do porównania
+        # Usuwamy znaki interpunkcyjne i zmieniamy na małe litery
+        test_pattern = r"[^a-ząćżźęńół0-9 ]+"
+        org_text_norm = re.sub(test_pattern, '', original_text.lower()) 
+        trans_text_norm = re.sub(test_pattern, '', transcribed_text.lower())
+
+        # Obliczanie wyniku dopasowania
+        score = fuzz.ratio(org_text_norm, trans_text_norm)
         
-        # Jeśli podobieństwo jest poniżej np. 70%, uznajemy to za błąd
-        # (Wartość 0.7 trzeba dobrać eksperymentalnie)
-        if similarity < 0.7:
-            print(f"Błąd: Tekst mało podobny. Oczekiwano: '{original_text}', Otrzymano: '{transcribed_text}'")
-            return False
+        # Opcjonalnie: dodatkowa metryka np. token match
+        token_score = fuzz.token_sort_ratio(org_text_norm, trans_text_norm)
+
+        # Logika oceny "sukcesu" - można dostosować próg
+        is_match = score > 85
+
+        return {
+            "success": True,
+            "transcribed_text": transcribed_text,
+            "original_text": original_text,
+            "score": score,
+            "token_score": token_score,
+            "match": is_match,
+            "details": {
+                "normalized_original": org_text_norm,
+                "normalized_transcribed": trans_text_norm
+            }
+        }
+
     except Exception as e:
-        print(f"Błąd walidacji: {e}")
-        return True
-
+        import traceback
+        print(f"Exception in analyze_audio: {e}")
+        print(traceback.format_exc())
+        return {
+            "success": False,
+            "error": str(e)
+        }
 
 def check_audio_quality(audio_path, original_text) -> bool:
     """
