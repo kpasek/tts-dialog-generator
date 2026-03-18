@@ -6,21 +6,21 @@ import os
 import time
 from pathlib import Path
 
-from TTS.api import TTS
 from TTS.tts.configs.xtts_config import XttsConfig
-from TTS.tts.models.xtts import XttsAudioConfig, XttsArgs
+from TTS.tts.models.xtts import Xtts, XttsAudioConfig, XttsArgs
 from TTS.config.shared_configs import BaseDatasetConfig
 
 GENERATOR_DIR = Path(__file__).parent.resolve()
+TRAINED_MODEL_PATH = Path.home() / ".local" / "share" / "tts" / "tts_models--multilingual--multi-dataset--exported_xtts_finet"
+# TRAINED_MODEL_PATH = Path.home() / ".local" / "share" / "tts" / "tts_models--multilingual--multi-dataset--xtts_v2"
 
 
 class XTTSPolishTTS:
     """
-    TTS implementation using XTTS v2.
+    TTS implementation using XTTS v2 with locally trained model.
     Configuration: FP32 (Native) + Cached Latents + No Compilation overhead.
     """
     
-    _shared_wrapper = None
     _shared_model = None
     _latents_cache = {}
 
@@ -29,22 +29,41 @@ class XTTSPolishTTS:
             XttsConfig, XttsArgs, XttsAudioConfig, BaseDatasetConfig
         ])
 
-        # 1. Ładujemy model klasycznie (FP32) - TYLKO RAZ
-        if XTTSPolishTTS._shared_wrapper is None:
-            print("Inicjalizacja XTTS v2 (Tryb Czysta Wydajność) - Ładowanie modelu...")
-            # To jest najstabilniejsza i na Twoim sprzęcie najszybsza opcja.
-            self.wrapper = TTS("tts_models/multilingual/multi-dataset/xtts_v2")
-            self.model = self.wrapper.synthesizer.tts_model # type: ignore
-
+        # 1. Ładujemy wytrenowany model - TYLKO RAZ
+        if XTTSPolishTTS._shared_model is None:
+            print("Inicjalizacja XTTS v2 - Ładowanie wytrenowanego modelu...")
+            
+            # Sprawdzamy, czy katalog modelu istnieje
+            if not TRAINED_MODEL_PATH.exists():
+                raise FileNotFoundError(f"Model nie znaleziony w: {TRAINED_MODEL_PATH}")
+            
+            print(f"Załadowanie modelu z: {TRAINED_MODEL_PATH}")
+            
+            # Ładujemy konfigurację
+            config_path = TRAINED_MODEL_PATH / "config.json"
+            config = XttsConfig()
+            config.load_json(str(config_path))
+            
+            # Inicjalizujemy model z konfiguracji
+            self.model = Xtts.init_from_config(config)
+            
+            # Ładujemy wytrenowane wagi
+            self.model.load_checkpoint(
+                config=config,
+                checkpoint_path=str(TRAINED_MODEL_PATH / "model.pth"),
+                vocab_path=str(TRAINED_MODEL_PATH / "vocab.json"),
+                speaker_file_path=str(TRAINED_MODEL_PATH / "speakers_xtts.pth"),
+                eval=True,
+                strict=False
+            )
+            
             device = "cuda" if torch.cuda.is_available() else "cpu"
             print(f"Urządzenie: {device}")
-            self.wrapper.to(device)  # Domyślnie float32
+            self.model.to(device)  # Domyślnie float32
             
-            XTTSPolishTTS._shared_wrapper = self.wrapper
             XTTSPolishTTS._shared_model = self.model
         else:
             print("XTTS v2: Używam załadowanego modelu z cache.")
-            self.wrapper = XTTSPolishTTS._shared_wrapper
             self.model = XTTSPolishTTS._shared_model # type: ignore
 
         # 2. Ładujemy ścieżkę głosu
