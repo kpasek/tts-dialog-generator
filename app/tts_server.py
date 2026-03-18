@@ -296,7 +296,7 @@ def create_app(path_converter, staging_dir: Path | None = None):
 
         import gc
         try:
-            MAX_CHARS = 200
+            MAX_CHARS = 200 if model_name != "teamsp" else 10000000
             generated_path: Path | None = None
             start_t = time.time()
             audio_clips = None
