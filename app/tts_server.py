@@ -21,11 +21,13 @@ sys.path.append(os.path.dirname(os.path.abspath(__file__)))
 from generators.tts_base import TTSBase
 from generators.xtts import XTTSPolishTTS
 from generators.piper_tts import PiperTTS
+from generators.teamsp_tts import TeamSPTTS
 from app.audio_verify import check_audio_quality, analyze_audio
 # --- Rejestr modeli ---
 MODEL_REGISTRY = {
     "xtts": lambda voice: XTTSPolishTTS(voice_path=voice),
-    "piper": lambda  model: PiperTTS(model_path=model)
+    "piper": lambda  model: PiperTTS(model_path=model),
+    "teamsp": lambda voice: TeamSPTTS(voice=str(voice)) if voice else TeamSPTTS()
 }
 
 # --- Globals ---
